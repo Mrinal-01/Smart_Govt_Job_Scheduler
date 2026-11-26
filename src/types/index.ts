@@ -20,7 +20,7 @@ export type ChapterStatus =
 
 export type RevisionType = 'same-day' | 'next-day' | 'weekly' | 'monthly' | 'practice' | 'manual'
 
-export type RevisionSource = 'session' | 'revision-center' | 'sunday-review' | 'mistake-practice'
+export type RevisionSource = 'session' | 'revision-center' | 'sunday-review' | 'mistake-practice' | 'cycle'
 
 export interface RevisionRecord {
   id: ID
@@ -324,6 +324,18 @@ export interface StudyState {
   attempts: MockAttempt[]
   aiMessages: AIMessage[]
   seededAt: string
+  /** Unpublished edits made in the Schedule page. null/undefined = no pending edits. */
+  scheduleDraft?: ScheduleSlot[] | null
+  /** Server-published schedule versions (see docs/ARCHITECTURE.md › Schedule governance). */
+  scheduleGovernance?: ScheduleGovernance | null
+}
+
+export interface ScheduleGovernance {
+  latestVersion: number
+  latestEffectiveFrom: ISODate
+  latestSlots: ScheduleSlot[]
+  /** Version whose slots are currently in `schedule` (drives today's sessions). */
+  activeVersion: number
 }
 
 export interface Toast {

@@ -1,11 +1,27 @@
-# StudyOS — Personal Study Management, Revision & Accountability Platform
+# StudyOS — Personal Study Management, Revision & Exam Preparation Platform
 
-A production-quality frontend prototype for competitive government exam
-preparation in India (RRB Group D, SSC, Railway, State PSC). Not a to-do app,
-not a Pomodoro timer — it is a **study ledger** that tracks what you learnt,
-revised, forgot and mastered over 365 days.
+A study ledger for competitive government exam preparation in India (RRB Group D, SSC,
+Railway, State PSC): schedules, sessions, study cycles with revision-before-learning,
+spaced revision, a personal PDF-to-question-bank pipeline, timed mock tests with a
+server-authoritative exam engine, a Mistake Bank and an AI study assistant.
 
-**Live preview:** https://3000-ix0s8idhys6cppdf6o096-b237eb32.sandbox.novita.ai
+**Quick start** (Node 18.18+, MongoDB running locally):
+
+```bash
+npm run setup
+npm run dev          # web http://localhost:3000 · API http://localhost:4000
+npm run check        # typecheck + all tests + production build
+```
+
+Documentation: [Setup](docs/SETUP.md) · [Architecture](docs/ARCHITECTURE.md) ·
+[Database](docs/DATABASE_SCHEMA.md) · [API](docs/API_DOCUMENTATION.md) ·
+[Security](docs/SECURITY.md) · [Audit](docs/CODEBASE_AUDIT.md) ·
+[Implementation report](docs/IMPLEMENTATION_REPORT.md)
+
+> The sections below describe the original frontend features, which are all still present.
+> Where they mention localStorage-only storage, no backend or a demo-only assistant, that is
+> historical: data is now stored per account on the server, and live AI is available when the
+> operator configures it.
 
 ---
 
@@ -118,10 +134,10 @@ revisions. Progress you make is stored in `localStorage` and survives refresh;
 **Settings → Reset demo data** regenerates everything.
 
 ## Run locally
+See [docs/SETUP.md](docs/SETUP.md). Production single process:
 ```bash
-npm install
-npm run build
-pm2 start ecosystem.config.cjs      # http://localhost:3000
+npm run build:all
+pm2 start ecosystem.config.cjs      # API + built web app on http://localhost:3000
 ```
 
 ## Known limitations (prototype scope)

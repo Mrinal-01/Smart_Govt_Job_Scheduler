@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle,
   Bell,
@@ -18,7 +19,11 @@ import {
   Trash2,
   Upload,
   User,
-  Volume2
+  Volume2,
+  Bot,
+  Repeat,
+  ShieldCheck,
+  UserCog
 } from 'lucide-react'
 import type { SoundChoice } from '../types'
 import {
@@ -33,18 +38,25 @@ import {
   Toggle
 } from '../components/ui'
 import { useStudy } from '../store/StudyStore'
+import { useAuth } from '../auth/AuthContext'
+import { AccountSection, AiUsageSection, RevisionPreferencesSection, SchedulePolicySection, SecuritySection } from './settings/AccountSections'
 import { reminderAudio, notifySupported, requestNotificationPermission } from '../services/audio'
 import { downloadCSV, downloadJSON } from '../lib/utils'
 import { formatDuration } from '../lib/date'
 import { cx } from '../lib/utils'
 
-type Section = 'profile' | 'study' | 'schedule' | 'reminders' | 'appearance' | 'data'
+type Section = 'account' | 'security' | 'profile' | 'study' | 'schedule' | 'policy' | 'revision' | 'reminders' | 'ai' | 'appearance' | 'data'
 
 const SECTIONS: Array<{ key: Section; label: string; icon: React.ReactNode }> = [
+  { key: 'account', label: 'Account', icon: <UserCog size={14} /> },
+  { key: 'security', label: 'Security & sessions', icon: <ShieldCheck size={14} /> },
   { key: 'profile', label: 'Profile & exam', icon: <User size={14} /> },
   { key: 'study', label: 'Study targets', icon: <GraduationCap size={14} /> },
   { key: 'schedule', label: 'Schedule defaults', icon: <Clock size={14} /> },
-  { key: 'reminders', label: 'Reminders & sound', icon: <BellRing size={14} /> },
+  { key: 'policy', label: 'Schedule change policy', icon: <Repeat size={14} /> },
+  { key: 'revision', label: 'Revision preferences', icon: <Repeat size={14} /> },
+  { key: 'reminders', label: 'Notifications & reminders', icon: <BellRing size={14} /> },
+  { key: 'ai', label: 'AI & test settings', icon: <Bot size={14} /> },
   { key: 'appearance', label: 'Appearance', icon: <Palette size={14} /> },
   { key: 'data', label: 'Data & backup', icon: <Database size={14} /> }
 ]
@@ -68,13 +80,25 @@ export default function SettingsPage() {
     notify
   } = useStudy()
 
-  const [section, setSection] = useState<Section>('profile')
+  const { user } = useAuth()
+  const [params, setParams] = useSearchParams()
+  const isSection = (v: string | null): v is Section => SECTIONS.some((x) => x.key === v)
+  const [section, setSectionState] = useState<Section>(() => (isSection(params.get('section')) ? (params.get('section') as Section) : 'account'))
+  useEffect(() => {
+    const p = params.get('section')
+    if (isSection(p)) setSectionState(p)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params])
+  const setSection = (s: Section) => {
+    setSectionState(s)
+    setParams({ section: s }, { replace: true })
+  }
   const [confirmReset, setConfirmReset] = useState(false)
   const [permission, setPermission] = useState<string>(() =>
     notifySupported() ? Notification.permission : 'unsupported'
   )
   const [name, setName] = useState(state.profile.name)
-  const [email, setEmail] = useState(state.profile.email)
+  const email = user?.email ?? state.profile.email
   const fileRef = useRef<HTMLInputElement>(null)
 
   const s = state.settings
@@ -112,7 +136,7 @@ export default function SettingsPage() {
         <div className="page-head__text">
           <h1>Settings</h1>
           <p className="page-head__sub">
-            Exam target, study targets, schedule defaults, reminder behaviour, theme and data. Everything is persisted locally in this prototype.
+            Account and security, exam target, study targets, schedule policy, revision preferences, reminders, AI, theme and data. Your study data is stored on the server for your account only.
           </p>
         </div>
         <div className="page-head__actions">
@@ -140,6 +164,11 @@ export default function SettingsPage() {
         </nav>
 
         <div className="stack">
+          {section === 'account' ? <AccountSection /> : null}
+          {section === 'security' ? <SecuritySection /> : null}
+          {section === 'policy' ? <SchedulePolicySection /> : null}
+          {section === 'revision' ? <RevisionPreferencesSection /> : null}
+          {section === 'ai' ? <AiUsageSection /> : null}
           {section === 'profile' ? (
             <Card>
               <CardHeader title="Profile & examination target" subtitle="Used across the dashboard, reports and the AI assistant context" icon={<User size={15} />} />
@@ -147,8 +176,8 @@ export default function SettingsPage() {
                 <Field label="Full name">
                   <Input value={name} onChange={(e) => setName(e.target.value)} />
                 </Field>
-                <Field label="Email">
-                  <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+                <Field label="Email" hint="Your account email (change it under Account)">
+                  <Input type="email" value={email} readOnly />
                 </Field>
                 <Field label="Target examination">
                   <Select value={s.examTarget} onChange={(e) => updateSettings({ examTarget: e.target.value })}>
@@ -185,7 +214,7 @@ export default function SettingsPage() {
                       notify({ title: 'Name too short', message: 'Enter at least 2 characters.', variant: 'error' })
                       return
                     }
-                    updateProfile({ name: name.trim(), email: email.trim() })
+                    updateProfile({ name: name.trim(), email })
                     notify({ title: 'Profile saved', message: 'Your details were updated.', variant: 'success' })
                   }}
                 >
@@ -692,10 +721,9 @@ export default function SettingsPage() {
               <Card>
                 <CardHeader title="Prototype limitations" icon={<AlertTriangle size={15} />} />
                 <ul className="stack" style={{ gap: 6, fontSize: 11.5, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-                  <li>• Data lives in localStorage only — clearing site data erases it. Export first.</li>
-                  <li>• No account system; a Node.js + MongoDB backend replaces the service layer.</li>
-                  <li>• Reminders run only while this tab is open — background push needs a service worker + server scheduler.</li>
-                  <li>• The AI assistant is rules-based demo logic, never a live model call.</li>
+                  <li>• Study data is saved to your account on the server; this browser keeps an offline copy.</li>
+                  <li>• Reminders run only while this tab is open — background push needs a service worker + server scheduler (not implemented).</li>
+                  <li>• The built-in assistant modes are rules-based; live AI answers need the server AI provider to be configured.</li>
                   <li>• Demo MCQs are practice questions, not official previous-year papers.</li>
                 </ul>
               </Card>
@@ -715,7 +743,7 @@ export default function SettingsPage() {
         reasonPlaceholder="e.g. Starting fresh"
         onConfirm={() => {
           resetDemoData()
-          setName('Ananya Sharma')
+          setName(state.profile.name)
         }}
       />
     </main>

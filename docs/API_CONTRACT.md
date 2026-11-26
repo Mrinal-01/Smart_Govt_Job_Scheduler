@@ -1,3 +1,5 @@
+> **Superseded (2026-11-26).** This was the original design spec written before a backend existed. The implemented API is documented in [API_DOCUMENTATION.md](API_DOCUMENTATION.md).
+
 # StudyOS — Backend API Contract (Node.js + Express + MongoDB)
 
 This document is the complete API surface a real backend must implement. The

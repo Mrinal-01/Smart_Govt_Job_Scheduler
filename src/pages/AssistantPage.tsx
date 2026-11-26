@@ -17,7 +17,9 @@ import {
   User
 } from 'lucide-react'
 import type { AIMode, AIMessage } from '../types'
-import { Badge, Button, Card, CardHeader, EmptyState, Field, Select, Textarea } from '../components/ui'
+import { Badge, Button, Card, CardHeader, EmptyState, Field, Segmented, Select, Textarea } from '../components/ui'
+import { useAuth } from '../auth/AuthContext'
+import { api, errorMessage } from '../lib/http'
 import { useStudy } from '../store/StudyStore'
 import { dueRevisions, subjectProgress, topicMastery, allTopics } from '../store/selectors'
 import { demoConversation, respond } from '../services/assistant'
@@ -40,8 +42,31 @@ const STARTERS: Record<AIMode, string[]> = {
   'weekly-report': ['Weekly report', 'How consistent was my week?', 'What should I change next week?']
 }
 
+/** How each assistant mode maps onto the server's grounded analysis modes. */
+const LIVE_MODE: Record<AIMode, string> = {
+  assistant: 'chat',
+  quiz: 'chat',
+  'weak-topics': 'weak_chapters',
+  'smart-revision': 'revision_priorities',
+  'weekly-report': 'weekly_summary'
+}
+
+const LIVE_ACTIONS: Array<{ mode: string; label: string }> = [
+  { mode: 'weak_subjects', label: 'Analyse weak subjects' },
+  { mode: 'weak_chapters', label: 'Identify weak chapters' },
+  { mode: 'revision_priorities', label: 'Revision priorities' },
+  { mode: 'weekly_summary', label: 'Weekly summary' },
+  { mode: 'plan_suggestions', label: 'Improve my study plan' }
+]
+
 export default function AssistantPage() {
   const { state, appendAIMessage, clearAIMessages, today } = useStudy()
+  const { config } = useAuth()
+  const liveAvailable = Boolean(config?.ai.configured)
+  const [engine, setEngine] = useState<'rules' | 'live'>(liveAvailable ? 'live' : 'rules')
+  useEffect(() => {
+    if (!liveAvailable) setEngine('rules')
+  }, [liveAvailable])
   const navigate = useNavigate()
   const [mode, setMode] = useState<AIMode>('assistant')
   const [input, setInput] = useState('')
@@ -61,9 +86,37 @@ export default function AssistantPage() {
     if (el) el.scrollTop = el.scrollHeight
   }, [messages.length, thinking])
 
+  /** Live AI: the server builds the context from this account's real data and calls the model. */
+  const sendLive = async (text: string, liveMode: string) => {
+    const trimmed = text.trim()
+    if (thinking) return
+    appendAIMessage({ role: 'user', mode, content: trimmed || LIVE_ACTIONS.find((a) => a.mode === liveMode)?.label || 'Analyse', demo: false })
+    setInput('')
+    setThinking(true)
+    try {
+      const history = state.aiMessages
+        .filter((m) => !m.demo)
+        .slice(-8)
+        .map((m) => ({ role: m.role, content: m.content.slice(0, 6000) }))
+      const r = await api<{ content: string }>('/api/ai/analyze', {
+        method: 'POST',
+        body: { mode: liveMode, message: trimmed || undefined, history: liveMode === 'chat' ? history : undefined }
+      })
+      appendAIMessage({ role: 'assistant', mode, content: r.content, demo: false })
+    } catch (err) {
+      appendAIMessage({ role: 'assistant', mode, content: `**AI request failed:** ${errorMessage(err)}`, demo: false })
+    } finally {
+      setThinking(false)
+    }
+  }
+
   const send = (text: string) => {
     const trimmed = text.trim()
     if (!trimmed || thinking) return
+    if (engine === 'live') {
+      void sendLive(trimmed, LIVE_MODE[mode])
+      return
+    }
     appendAIMessage({ role: 'user', mode, content: trimmed, demo: true })
     setInput('')
     setThinking(true)
@@ -81,29 +134,52 @@ export default function AssistantPage() {
         <div className="page-head__text">
           <h1>AI Study Assistant</h1>
           <p className="page-head__sub">
-            Interface and service layer are ready for a secure Node.js + OpenAI backend. Every response here is generated locally by rules over your own
-            study data — and labelled as demo. No API key ever touches the browser.
+            Two engines: <strong>Rules</strong> (instant, offline, computed from your own records and labelled “demo”) and <strong>Live AI</strong> (a model called by
+            the server with your real study data as context). No API key ever touches the browser.
           </p>
         </div>
         <div className="page-head__actions">
+          <Segmented
+            value={engine}
+            onChange={(v) => (v === 'live' && !liveAvailable ? undefined : setEngine(v))}
+            options={[
+              { value: 'rules', label: 'Rules (offline)' },
+              { value: 'live', label: liveAvailable ? 'Live AI' : 'Live AI (not configured)' }
+            ]}
+          />
           <Button variant="secondary" icon={<Trash2 size={14} />} onClick={clearAIMessages} disabled={!state.aiMessages.length}>
             Clear chat
           </Button>
         </div>
       </div>
 
-      <div className="callout callout--warning section">
-        <Lock size={14} />
-        <div>
-          <strong>Demo mode — no AI model is being called.</strong>
-          <div style={{ marginTop: 3, lineHeight: 1.55 }}>
-            Responses are computed from your local revision, topic and mistake records. To go live, the Express backend holds{' '}
-            <code style={{ fontSize: 11 }}>OPENAI_API_KEY</code> and exposes the endpoints in <code style={{ fontSize: 11 }}>docs/API_CONTRACT.md</code>.
-            Flip <code style={{ fontSize: 11 }}>USE_REMOTE_API</code> in <code style={{ fontSize: 11 }}>src/services/api.ts</code> and nothing else
-            changes.
+      {engine === 'rules' ? (
+        <div className="callout callout--warning section">
+          <Lock size={14} />
+          <div>
+            <strong>Rules mode — no AI model is being called.</strong>
+            <div style={{ marginTop: 3, lineHeight: 1.55 }}>
+              Responses are computed from your revision, topic and mistake records and labelled “demo”.{' '}
+              {liveAvailable ? 'Switch to Live AI for model answers.' : 'Live AI needs the server operator to set AI_PROVIDER and an API key (see docs/SETUP.md).'}
+            </div>
           </div>
         </div>
-      </div>
+      ) : (
+        <div className="callout callout--info section">
+          <Sparkles size={14} />
+          <div>
+            <strong>Live AI ({config?.ai.model}).</strong> The server sends only your own study facts as context and instructs the model never to invent history. Answers are
+            AI-generated — check them against your notes. Daily usage is limited.
+            <div className="row row--wrap" style={{ gap: 6, marginTop: 8 }}>
+              {LIVE_ACTIONS.map((a) => (
+                <button key={a.mode} className="suggest-chip" disabled={thinking} onClick={() => void sendLive('', a.mode)}>
+                  {a.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="ai-layout">
         <div className="stack" style={{ gap: 12 }}>
@@ -178,11 +254,11 @@ export default function AssistantPage() {
                 {MODES.find((m) => m.key === mode)?.label}
               </p>
               <p className="text-tertiary" style={{ fontSize: 11 }}>
-                Local rules · grounded in your study history
+                {engine === 'live' ? 'Server AI · grounded in your account data' : 'Local rules · grounded in your study history'}
               </p>
             </div>
-            <Badge tone="warning" size="sm" dot>
-              demo data
+            <Badge tone={engine === 'live' ? 'info' : 'warning'} size="sm" dot>
+              {engine === 'live' ? 'live AI' : 'demo'}
             </Badge>
           </div>
 
@@ -244,29 +320,12 @@ export default function AssistantPage() {
       </div>
 
       <Card style={{ marginTop: 16 }}>
-        <CardHeader title="Integration checklist for the backend" icon={<Target size={15} />} />
-        <div className="grid grid--2" style={{ gap: 14 }}>
-          <div className="stack" style={{ gap: 7, fontSize: 11.5 }}>
-            <p className="field__label">Server responsibilities</p>
-            <ul className="stack" style={{ gap: 5, color: 'var(--text-secondary)' }}>
-              <li>1. Store the provider key only in server env (never client bundles).</li>
-              <li>2. Authenticate the user and load their study context server-side.</li>
-              <li>3. Cap tokens, rate-limit per user, log prompt + usage.</li>
-              <li>4. Tag generated questions <code>origin: "ai-generated"</code>.</li>
-              <li>5. Never claim generated MCQs are official previous-year papers.</li>
-            </ul>
-          </div>
-          <div className="stack" style={{ gap: 7, fontSize: 11.5 }}>
-            <p className="field__label">Endpoints the UI expects</p>
-            <ul className="stack" style={{ gap: 5, color: 'var(--text-secondary)' }}>
-              <li><code>POST /api/v1/ai/chat</code> · mode, message, context</li>
-              <li><code>POST /api/v1/ai/quiz</code> · subject, topic, difficulty, count</li>
-              <li><code>GET /api/v1/ai/weak-topics</code></li>
-              <li><code>GET /api/v1/ai/smart-revision</code></li>
-              <li><code>GET /api/v1/ai/weekly-report</code></li>
-            </ul>
-          </div>
-        </div>
+        <CardHeader title="More AI tools" icon={<Target size={15} />} />
+        <ul className="stack" style={{ gap: 5, fontSize: 12, color: 'var(--text-secondary)' }}>
+          <li>• Explain a wrong answer: open a PDF mock-test result and use “Explain with AI”.</li>
+          <li>• Generate practice questions: Question Bank → “Generate practice (AI)”. They are labelled AI-generated and must be verified before use.</li>
+          <li>• PDF structuring: when configured, the server uses AI to tidy low-confidence extractions — it never sets answers.</li>
+        </ul>
         <div className="row row--wrap" style={{ gap: 7, marginTop: 12 }}>
           <Button size="sm" variant="secondary" onClick={() => navigate('/subjects')} icon={<Lightbulb size={12} />}>
             Browse curriculum
@@ -292,7 +351,7 @@ function MessageBubble({ message, onSuggestion }: { message: AIMessage; onSugges
           <Markdown text={message.content} />
         </div>
         <div className="msg__foot">
-          {message.demo ? <Badge tone="warning" size="sm">demo</Badge> : null}
+          {message.demo ? <Badge tone="warning" size="sm">demo</Badge> : message.role === 'assistant' ? <Badge tone="info" size="sm">AI-generated</Badge> : null}
           <span>{new Date(message.createdAt).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })}</span>
         </div>
         {!isUser && message.suggestions?.length ? (

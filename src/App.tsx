@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Route, Routes, useLocation } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { AlertTriangle, ArrowRight, BellRing, Check, Clock, Volume2, VolumeX } from 'lucide-react'
 import { Header, Sidebar } from './components/AppShell'
 import { Badge, Button, ToastStack } from './components/ui'
@@ -23,6 +23,18 @@ import AssistantPage from './pages/AssistantPage'
 import SettingsPage from './pages/SettingsPage'
 import SundayPage from './pages/SundayPage'
 import NotFoundPage from './pages/NotFoundPage'
+import LoginPage from './pages/auth/LoginPage'
+import RegisterPage from './pages/auth/RegisterPage'
+import { ForgotPasswordPage, ResetPasswordPage, TermsPage, VerifyEmailPage } from './pages/auth/AccountRecoveryPages'
+import CyclesPage from './pages/CyclesPage'
+import TestsHomePage from './pages/tests/TestsHomePage'
+import CreateTestPage from './pages/tests/CreateTestPage'
+import DocumentReviewPage from './pages/tests/DocumentReviewPage'
+import QuestionBankPage from './pages/tests/QuestionBankPage'
+import LiveTestPage from './pages/tests/LiveTestPage'
+import AttemptResultPage from './pages/tests/AttemptResultPage'
+import { useAuth } from './auth/AuthContext'
+import { WorkspaceGate } from './workspace/WorkspaceGate'
 
 /* ------------------------------------------------------------------ */
 /* Reminder engine — runs in the foreground while the tab is alive.    */
@@ -211,7 +223,65 @@ function ReminderOverlay({
 
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* Routing: public auth screens, then the authenticated workspace.     */
+/* ------------------------------------------------------------------ */
+
+function FullScreenLoading() {
+  return (
+    <div className="gate-center">
+      <div className="loading-block">
+        <span className="spin" style={{ display: 'inline-flex' }}>
+          <Clock size={16} />
+        </span>
+        <span>Loading StudyOS…</span>
+      </div>
+    </div>
+  )
+}
+
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  const { status } = useAuth()
+  const location = useLocation()
+  if (status === 'loading') return <FullScreenLoading />
+  if (status === 'anonymous') return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />
+  return <>{children}</>
+}
+
+function PublicOnly({ children }: { children: React.ReactNode }) {
+  const { status } = useAuth()
+  if (status === 'loading') return <FullScreenLoading />
+  if (status === 'authenticated') return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
 export default function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<PublicOnly><LoginPage /></PublicOnly>} />
+      <Route path="/register" element={<PublicOnly><RegisterPage /></PublicOnly>} />
+      <Route path="/forgot-password" element={<PublicOnly><ForgotPasswordPage /></PublicOnly>} />
+      <Route path="/verify-email" element={<VerifyEmailPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/terms" element={<TermsPage />} />
+      <Route
+        path="/*"
+        element={
+          <RequireAuth>
+            <WorkspaceGate>
+              <Routes>
+                <Route path="/exam/:attemptId" element={<LiveTestPage />} />
+                <Route path="/*" element={<StudyApp />} />
+              </Routes>
+            </WorkspaceGate>
+          </RequireAuth>
+        }
+      />
+    </Routes>
+  )
+}
+
+function StudyApp() {
   const { state, toasts, dismissToast, today } = useStudy()
   const [menuOpen, setMenuOpen] = useState(false)
   const location = useLocation()
@@ -261,6 +331,12 @@ export default function App() {
           <Route path="/assistant" element={<AssistantPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/sunday" element={<SundayPage />} />
+          <Route path="/cycles" element={<CyclesPage />} />
+          <Route path="/tests" element={<TestsHomePage />} />
+          <Route path="/tests/new" element={<CreateTestPage />} />
+          <Route path="/tests/bank" element={<QuestionBankPage />} />
+          <Route path="/tests/documents/:documentId" element={<DocumentReviewPage />} />
+          <Route path="/tests/attempts/:attemptId" element={<AttemptResultPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </div>

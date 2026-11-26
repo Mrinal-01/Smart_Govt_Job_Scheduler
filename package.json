@@ -1,15 +1,27 @@
 {
-  "name": "webapp",
+  "name": "studyos",
+  "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=18.18"
+  },
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "wrangler pages dev dist --ip 0.0.0.0 --port 3000",
-    "deploy": "npm run build && wrangler pages deploy",
-    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+    "dev": "concurrently -k -n api,web -c blue,magenta \"npm --prefix server run dev\" \"vite\"",
+    "dev:web": "vite",
+    "dev:api": "npm --prefix server run dev",
+    "build": "tsc --noEmit -p . && vite build",
+    "build:all": "npm run build && npm --prefix server run build",
+    "start": "npm --prefix server run start",
+    "preview": "vite preview --host 0.0.0.0 --port 3000",
+    "typecheck": "tsc --noEmit -p .",
+    "typecheck:all": "tsc --noEmit -p . && npm --prefix server run typecheck",
+    "test": "vitest run",
+    "test:all": "vitest run && npm --prefix server test",
+    "check": "npm run typecheck:all && npm run test:all && npm run build",
+    "setup": "npm install && npm --prefix server install",
+    "deploy": "npm run build && wrangler pages deploy"
   },
   "dependencies": {
-    "hono": "^4.13.14",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -17,13 +29,18 @@
     "recharts": "^2.15.0"
   },
   "devDependencies": {
-    "@hono/vite-build": "^1.11.1",
-    "@hono/vite-dev-server": "^0.26.1",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/user-event": "^14.5.2",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
-    "@vitejs/plugin-react": "^6.3.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "jsdom": "^25.0.1",
     "typescript": "^5.7.2",
-    "vite": "^8.1.4",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.8",
     "wrangler": "^4.110.0"
   }
 }

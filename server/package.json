@@ -1,0 +1,55 @@
+{
+  "name": "studyos-server",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18.18"
+  },
+  "scripts": {
+    "dev": "tsx watch --clear-screen=false src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run",
+    "migrate:import-local": "tsx src/scripts/importLocalBackup.ts",
+    "admin:promote": "tsx src/scripts/promoteAdmin.ts",
+    "e2e:smoke": "tsx scripts/e2e-smoke.mts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.14.0",
+    "@node-rs/argon2": "^2.2.2",
+    "canvas": "file:./vendor/canvas-stub",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^16.6.1",
+    "express": "^4.22.3",
+    "express-rate-limit": "^7.5.1",
+    "google-auth-library": "^9.15.1",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^8.24.11",
+    "multer": "^2.5.0",
+    "pdfjs-dist": "3.11.174",
+    "pino": "^9.14.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.10",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^4.17.25",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/multer": "^1.4.13",
+    "@types/node": "^20.19.43",
+    "@types/supertest": "^6.0.3",
+    "pdf-lib": "^1.17.1",
+    "pino-pretty": "^11.3.0",
+    "supertest": "^7.3.2",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.9"
+  },
+  "overrides": {
+    "canvas": "$canvas",
+    "uuid": "^11.1.1"
+  }
+}

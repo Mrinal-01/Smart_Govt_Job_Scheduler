@@ -703,6 +703,45 @@ export function buildSeedState(now = new Date()): StudyState {
   }
 }
 
+/**
+ * A real starting point for a new account: the curriculum and default
+ * timetable without any generated history (no demo logs, sessions,
+ * attempts or mistakes). Demo questions/tests stay, clearly labelled.
+ */
+export function buildFreshState(profile?: { name?: string; email?: string }, now = new Date()): StudyState {
+  const seed = buildSeedState(now)
+  const today = dateKey(now)
+  return {
+    ...seed,
+    profile: { ...seed.profile, name: profile?.name ?? seed.profile.name, email: profile?.email ?? seed.profile.email, joinedAt: today },
+    subjects: seed.subjects.map((s) => ({ ...s, createdAt: today })),
+    chapters: seed.chapters.map((c) => ({
+      ...c,
+      topics: c.topics.map((t) => ({
+        ...t,
+        initialLearningDate: null,
+        learningCompleted: false,
+        practiceCompleted: false,
+        pyqCompleted: false,
+        revisions: [],
+        intervalIndex: 0,
+        nextRevisionDue: null,
+        questionsAttempted: 0,
+        questionsCorrect: 0,
+        confidence: 0,
+        mistakeCount: 0,
+        mockAccuracy: null,
+        notes: ''
+      }))
+    })),
+    sessions: {},
+    logs: [],
+    mistakes: [],
+    attempts: [],
+    aiMessages: []
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Rolling state forward when the calendar day changes                 */
 /* ------------------------------------------------------------------ */

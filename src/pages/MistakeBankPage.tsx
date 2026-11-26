@@ -22,9 +22,11 @@ import {
   Input,
   Modal,
   Progress,
+  Segmented,
   Select,
   Tabs
 } from '../components/ui'
+import ExamMistakesPanel from './tests/ExamMistakesPanel'
 import { useStudy } from '../store/StudyStore'
 import { chapterById, subjectById, topicById } from '../store/selectors'
 import { formatShortDate } from '../lib/date'
@@ -55,6 +57,17 @@ export default function MistakeBankPage() {
   const [practice, setPractice] = useState<Mistake | null>(null)
   const [choice, setChoice] = useState<number | null>(null)
   const [revealed, setRevealed] = useState(false)
+  const [source, setSource] = useState<'practice' | 'exams'>('practice')
+  const sourceSwitch = (
+    <Segmented
+      value={source}
+      onChange={setSource}
+      options={[
+        { value: 'practice', label: 'Sessions & demo tests' },
+        { value: 'exams', label: 'PDF mock tests' }
+      ]}
+    />
+  )
 
   const filtered = useMemo(() => {
     let list = state.mistakes
@@ -91,6 +104,21 @@ export default function MistakeBankPage() {
     setRevealed(false)
   }
 
+  if (source === 'exams') {
+    return (
+      <main className="page">
+        <div className="page-head">
+          <div className="page-head__text">
+            <h1>Mistake Bank</h1>
+            <p className="page-head__sub">Wrong answers on verified questions from your PDF mock tests. Each question is stored once; repeats raise its count.</p>
+          </div>
+          <div className="page-head__actions">{sourceSwitch}</div>
+        </div>
+        <ExamMistakesPanel />
+      </main>
+    )
+  }
+
   return (
     <main className="page">
       <div className="page-head">
@@ -102,6 +130,7 @@ export default function MistakeBankPage() {
           </p>
         </div>
         <div className="page-head__actions">
+          {sourceSwitch}
           <Button
             variant="primary"
             icon={<RotateCcw size={14} />}

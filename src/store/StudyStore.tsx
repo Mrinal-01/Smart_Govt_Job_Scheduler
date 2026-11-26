@@ -11,6 +11,7 @@ import type {
   RevisionRecord,
   RevisionSource,
   RevisionType,
+  ScheduleGovernance,
   ScheduleSlot,
   SessionCompletion,
   SessionRecord,
@@ -21,7 +22,7 @@ import type {
   Weekday
 } from '../types'
 import { buildSeedState, createSessionsForDate, summarizeDay } from '../data/seed'
-import { clearState, loadState, parseImportedState, saveState } from '../lib/storage'
+import { parseImportedState } from '../lib/storage'
 import { dateKey, diffDays, minutesFromTime, nowMinutes, weekdayOf } from '../lib/date'
 import { clamp, sum, uid } from '../lib/utils'
 import { addDays, epochFromIST } from '../lib/date'
@@ -115,9 +116,55 @@ interface StudyContextValue {
   appendAIMessage: (message: Omit<AIMessage, 'id' | 'createdAt'>) => void
   clearAIMessages: () => void
 
+  /* study cycles (server engine) → keep the topic ledger in sync */
+  registerLearning: (topicId: ID, date: string, confidence?: number | null) => void
+  recordCycleRevision: (topicId: ID, date: string, accuracy: number | null) => void
+
+  /* schedule governance */
+  syncScheduleFromServer: (status: ServerScheduleStatus) => void
+  discardScheduleDraft: () => void
+
   /* data */
   resetDemoData: () => void
   importData: (raw: string) => void
+}
+
+export interface ServerScheduleVersion {
+  version: number
+  effectiveFrom: string
+  slots: ScheduleSlot[]
+}
+
+export interface ServerScheduleStatus {
+  latest: ServerScheduleVersion | null
+  active: ServerScheduleVersion | null
+}
+
+const slotKey = (slots: ScheduleSlot[]) =>
+  JSON.stringify(
+    [...slots]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((s) => [s.id, s.weekday, s.subjectId, s.label, s.startTime, s.endTime, s.requiresRevision, s.learningTarget, s.practiceTarget, s.reminderEnabled, s.breakAfterMinutes, s.order, s.sessionNumber])
+  )
+
+export const sameSlots = (a: ScheduleSlot[], b: ScheduleSlot[]) => slotKey(a) === slotKey(b)
+
+/** The slots the Schedule page edits: unpublished draft → latest published → active. */
+export const draftScheduleOf = (state: StudyState): ScheduleSlot[] =>
+  state.scheduleDraft ?? state.scheduleGovernance?.latestSlots ?? state.schedule
+
+export const hasUnpublishedSchedule = (state: StudyState): boolean => {
+  if (!state.scheduleDraft) return false
+  const published = state.scheduleGovernance?.latestSlots ?? state.schedule
+  return !sameSlots(state.scheduleDraft, published)
+}
+
+/** Switch the active timetable when a published version becomes effective. Past sessions are untouched. */
+function applyGovernance(state: StudyState, today: string): StudyState {
+  const g = state.scheduleGovernance
+  if (!g || g.activeVersion === g.latestVersion || g.latestEffectiveFrom > today) return state
+  const next: StudyState = { ...state, schedule: g.latestSlots, scheduleGovernance: { ...g, activeVersion: g.latestVersion } }
+  return { ...next, sessions: createSessionsForDate(next, today) }
 }
 
 const StudyContext = createContext<StudyContextValue | null>(null)
@@ -156,6 +203,17 @@ function recomputeLog(state: StudyState, date: string): StudyState {
   return { ...state, logs: logs.sort((a, b) => (a.date < b.date ? -1 : 1)) }
 }
 
+function registerFirstLearning(topic: Topic, date: string, intervals: number[], confidence?: number | null): Topic {
+  return {
+    ...topic,
+    initialLearningDate: date,
+    learningCompleted: true,
+    intervalIndex: 0,
+    nextRevisionDue: addDays(date, intervals[0] ?? 1),
+    confidence: confidence ?? topic.confidence
+  }
+}
+
 function syncTopicOnCompletion(
   state: StudyState,
   completion: SessionCompletion,
@@ -173,8 +231,8 @@ function syncTopicOnCompletion(
       // If the completed topic is brand new, register the learning date.
       if (topic.id === completion.topicId && completion.learningCompleted) {
         if (!topic.initialLearningDate) {
-          next = { ...next, initialLearningDate: sessionDate, learningCompleted: true }
-          next = applyRevision(next, { date: sessionDate, type: 'same-day', source: 'session', confidence: completion.confidence }, intervals)
+          // First learning is not a revision: register it and schedule the first interval.
+          next = registerFirstLearning(next, sessionDate, intervals, completion.confidence)
         } else if (revisionCompleted) {
           next = applyRevision(
             next,
@@ -211,21 +269,36 @@ function syncTopicOnCompletion(
 /* Provider                                                             */
 /* -------------------------------------------------------------------- */
 
-export function StudyProvider({ children }: { children: React.ReactNode }) {
+export function StudyProvider({
+  children,
+  initialState,
+  onChange
+}: {
+  children: React.ReactNode
+  initialState: StudyState
+  /** Called after every state change (debounced persistence lives in the workspace sync layer). */
+  onChange?: (state: StudyState) => void
+}) {
   const [state, setState] = useState<StudyState>(() => {
-    const loaded = loadState()
     const today = dateKey()
-    return { ...loaded, sessions: createSessionsForDate(loaded, today) }
+    const governed = applyGovernance(initialState, today)
+    return { ...governed, sessions: createSessionsForDate(governed, today) }
   })
   const [today, setToday] = useState<string>(() => dateKey())
   const [toasts, setToasts] = useState<ToastItem[]>([])
   const stateRef = useRef(state)
   stateRef.current = state
 
-  /* persistence (debounced write) */
+  /* persistence */
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
+  const firstRender = useRef(true)
   useEffect(() => {
-    const t = window.setTimeout(() => saveState(state), 120)
-    return () => window.clearTimeout(t)
+    if (firstRender.current) {
+      firstRender.current = false
+      return
+    }
+    onChangeRef.current?.(state)
   }, [state])
 
   /* midnight rollover */
@@ -234,7 +307,10 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
       const key = dateKey()
       if (key !== today) {
         setToday(key)
-        setState((prev) => ({ ...prev, sessions: createSessionsForDate(prev, key) }))
+        setState((prev) => {
+          const governed = applyGovernance(prev, key)
+          return { ...governed, sessions: createSessionsForDate(governed, key) }
+        })
       }
     }
     const id = window.setInterval(tick, 30_000)
@@ -382,10 +458,19 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   /* ----------------------------- schedule ----------------------------- */
+  /*
+   * Edits go to an unpublished draft. They never touch today's sessions; the
+   * draft becomes the timetable only after it is published (server-governed)
+   * and its effective date arrives.
+   */
+  const editDraft = useCallback((fn: (draft: ScheduleSlot[]) => ScheduleSlot[]) => {
+    setState((prev) => ({ ...prev, scheduleDraft: fn(draftScheduleOf(prev)) }))
+  }, [])
+
   const addSlot = useCallback(
     (input: Omit<ScheduleSlot, 'id' | 'order' | 'sessionNumber'> & { sessionNumber?: number }) => {
-      setState((prev) => {
-        const sameDay = prev.schedule.filter((s) => s.weekday === input.weekday)
+      editDraft((draft) => {
+        const sameDay = draft.filter((s) => s.weekday === input.weekday)
         const sameSubject = sameDay.filter((s) => s.subjectId === input.subjectId)
         const slot: ScheduleSlot = {
           ...input,
@@ -393,67 +478,89 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
           order: sameDay.length,
           sessionNumber: input.sessionNumber ?? sameSubject.length + 1
         }
-        return {
-          ...prev,
-          schedule: [...prev.schedule, slot],
-          sessions: createSessionsForDate({ ...prev, schedule: [...prev.schedule, slot] }, dateKey())
-        }
+        return [...draft, slot]
       })
     },
-    []
+    [editDraft]
   )
 
-  const updateSlot = useCallback((id: ID, patch: Partial<ScheduleSlot>) => {
-    setState((prev) => {
-      const schedule = prev.schedule.map((s) => (s.id === id ? { ...s, ...patch } : s))
-      return { ...prev, schedule, sessions: createSessionsForDate({ ...prev, schedule }, dateKey()) }
-    })
-  }, [])
+  const updateSlot = useCallback(
+    (id: ID, patch: Partial<ScheduleSlot>) => {
+      editDraft((draft) => draft.map((s) => (s.id === id ? { ...s, ...patch } : s)))
+    },
+    [editDraft]
+  )
 
-  const deleteSlot = useCallback((id: ID) => {
-    setState((prev) => ({ ...prev, schedule: prev.schedule.filter((s) => s.id !== id) }))
-  }, [])
+  const deleteSlot = useCallback(
+    (id: ID) => {
+      editDraft((draft) => draft.filter((s) => s.id !== id))
+    },
+    [editDraft]
+  )
 
-  const moveSlot = useCallback((id: ID, dir: -1 | 1) => {
-    setState((prev) => {
-      const slot = prev.schedule.find((s) => s.id === id)
-      if (!slot) return prev
-      const daySlots = prev.schedule
-        .filter((s) => s.weekday === slot.weekday)
-        .sort((a, b) => a.order - b.order)
-      const index = daySlots.findIndex((s) => s.id === id)
-      const target = index + dir
-      if (target < 0 || target >= daySlots.length) return prev
-      const swapped = [...daySlots]
-      ;[swapped[index], swapped[target]] = [swapped[target], swapped[index]]
-      const orderMap = new Map(swapped.map((s, i) => [s.id, i]))
-      return {
-        ...prev,
-        schedule: prev.schedule.map((s) => (orderMap.has(s.id) ? { ...s, order: orderMap.get(s.id)! } : s))
-      }
-    })
-  }, [])
-
-  const copyDaySchedule = useCallback((from: Weekday, to: Weekday[]) => {
-    setState((prev) => {
-      const source = prev.schedule.filter((s) => s.weekday === from).sort((a, b) => a.order - b.order)
-      let schedule = [...prev.schedule]
-      to.forEach((weekday) => {
-        if (weekday === from) return
-        schedule = schedule.filter((s) => s.weekday !== weekday)
-        const copied = source.map((s, index) => ({ ...s, id: uid('slot'), weekday, order: index }))
-        schedule = [...schedule, ...copied]
+  const moveSlot = useCallback(
+    (id: ID, dir: -1 | 1) => {
+      editDraft((draft) => {
+        const slot = draft.find((s) => s.id === id)
+        if (!slot) return draft
+        const daySlots = draft.filter((s) => s.weekday === slot.weekday).sort((a, b) => a.order - b.order)
+        const index = daySlots.findIndex((s) => s.id === id)
+        const target = index + dir
+        if (target < 0 || target >= daySlots.length) return draft
+        const swapped = [...daySlots]
+        ;[swapped[index], swapped[target]] = [swapped[target], swapped[index]]
+        const orderMap = new Map(swapped.map((s, i) => [s.id, i]))
+        return draft.map((s) => (orderMap.has(s.id) ? { ...s, order: orderMap.get(s.id)! } : s))
       })
-      schedule.sort((a, b) => a.weekday - b.weekday || a.order - b.order)
-      return { ...prev, schedule, sessions: createSessionsForDate({ ...prev, schedule }, dateKey()) }
-    })
+    },
+    [editDraft]
+  )
+
+  const copyDaySchedule = useCallback(
+    (from: Weekday, to: Weekday[]) => {
+      editDraft((draft) => {
+        const source = draft.filter((s) => s.weekday === from).sort((a, b) => a.order - b.order)
+        let schedule = [...draft]
+        to.forEach((weekday) => {
+          if (weekday === from) return
+          schedule = schedule.filter((s) => s.weekday !== weekday)
+          schedule = [...schedule, ...source.map((s, index) => ({ ...s, id: uid('slot'), weekday, order: index }))]
+        })
+        return schedule.sort((a, b) => a.weekday - b.weekday || a.order - b.order)
+      })
+    },
+    [editDraft]
+  )
+
+  const replaceDaySchedule = useCallback(
+    (weekday: Weekday, slots: ScheduleSlot[]) => {
+      editDraft((draft) => [...draft.filter((s) => s.weekday !== weekday), ...slots.map((s, i) => ({ ...s, weekday, order: i }))])
+    },
+    [editDraft]
+  )
+
+  const discardScheduleDraft = useCallback(() => {
+    setState((prev) => ({ ...prev, scheduleDraft: null }))
   }, [])
 
-  const replaceDaySchedule = useCallback((weekday: Weekday, slots: ScheduleSlot[]) => {
+  /** Reconcile with the server's published versions (the server is authoritative). */
+  const syncScheduleFromServer = useCallback((status: ServerScheduleStatus) => {
     setState((prev) => {
-      const others = prev.schedule.filter((s) => s.weekday !== weekday)
-      const schedule = [...others, ...slots.map((s, i) => ({ ...s, weekday, order: i }))]
-      return { ...prev, schedule, sessions: createSessionsForDate({ ...prev, schedule }, dateKey()) }
+      if (!status.latest) return prev
+      const todayKey = dateKey()
+      const active = status.active ?? status.latest
+      const governance: ScheduleGovernance = {
+        latestVersion: status.latest.version,
+        latestEffectiveFrom: status.latest.effectiveFrom,
+        latestSlots: status.latest.slots,
+        activeVersion: active.version
+      }
+      const switchActive = prev.scheduleGovernance?.activeVersion !== active.version || !sameSlots(prev.schedule, active.slots)
+      let next: StudyState = { ...prev, scheduleGovernance: governance }
+      if (switchActive) next = { ...next, schedule: active.slots }
+      if (next.scheduleDraft && sameSlots(next.scheduleDraft, governance.latestSlots)) next = { ...next, scheduleDraft: null }
+      next = applyGovernance(next, todayKey)
+      return switchActive ? { ...next, sessions: createSessionsForDate(next, todayKey) } : next
     })
   }, [])
 
@@ -729,6 +836,42 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
     []
   )
 
+  /* ---------------------- study cycle integration ---------------------- */
+  const registerLearning = useCallback((topicId: ID, date: string, confidence?: number | null) => {
+    setState((prev) => {
+      let changed = false
+      const chapters = prev.chapters.map((c) => ({
+        ...c,
+        topics: c.topics.map((t) => {
+          if (t.id !== topicId || t.initialLearningDate) return t
+          changed = true
+          return registerFirstLearning(t, date, prev.settings.revisionIntervals, confidence)
+        })
+      }))
+      return changed ? recomputeLog({ ...prev, chapters }, date) : prev
+    })
+  }, [])
+
+  /**
+   * A same-day cycle revision is recorded in the topic's history but does not
+   * advance the spaced (next-day / weekly / monthly) interval schedule.
+   */
+  const recordCycleRevision = useCallback((topicId: ID, date: string, accuracy: number | null) => {
+    setState((prev) => {
+      let changed = false
+      const chapters = prev.chapters.map((c) => ({
+        ...c,
+        topics: c.topics.map((t) => {
+          if (t.id !== topicId) return t
+          changed = true
+          const record: RevisionRecord = { id: uid('rev'), date, type: 'same-day', source: 'cycle', accuracy }
+          return { ...t, revisions: [...t.revisions, record] }
+        })
+      }))
+      return changed ? recomputeLog({ ...prev, chapters }, date) : prev
+    })
+  }, [])
+
   /* ----------------------------- mistakes ----------------------------- */
   const addMistake = useCallback(
     (input: Omit<Mistake, 'id' | 'date' | 'status' | 'reviewCount' | 'lastReviewedAt'>) => {
@@ -832,9 +975,22 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   /* -------------------------------- data ------------------------------- */
+  /** Replacing data never bypasses schedule governance: the published timetable stays active and the new one becomes a draft. */
+  const keepGovernance = (prev: StudyState, incoming: StudyState): StudyState => {
+    const g = prev.scheduleGovernance
+    if (!g) return incoming
+    const active = prev.schedule
+    return {
+      ...incoming,
+      profile: { ...incoming.profile, name: prev.profile.name, email: prev.profile.email },
+      scheduleGovernance: g,
+      schedule: active,
+      scheduleDraft: sameSlots(incoming.schedule, g.latestSlots) ? null : incoming.schedule
+    }
+  }
+
   const resetDemoData = useCallback(() => {
-    clearState()
-    const fresh = buildSeedState()
+    const fresh = keepGovernance(stateRef.current, buildSeedState())
     setState({ ...fresh, sessions: createSessionsForDate(fresh, dateKey()) })
     setToday(dateKey())
     notify({ title: 'Demo data restored', message: 'A fresh 365-day dataset has been generated.', variant: 'success' })
@@ -843,7 +999,7 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
   const importData = useCallback(
     (raw: string) => {
       try {
-        const parsed = parseImportedState(raw)
+        const parsed = keepGovernance(stateRef.current, parseImportedState(raw))
         setState({ ...parsed, sessions: createSessionsForDate(parsed, dateKey()) })
         notify({ title: 'Backup imported', message: 'Your study data was restored.', variant: 'success' })
       } catch (err) {
@@ -904,6 +1060,10 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
       submitAttempt,
       appendAIMessage,
       clearAIMessages,
+      registerLearning,
+      recordCycleRevision,
+      syncScheduleFromServer,
+      discardScheduleDraft,
       resetDemoData,
       importData
     }),
@@ -953,6 +1113,10 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
       submitAttempt,
       appendAIMessage,
       clearAIMessages,
+      registerLearning,
+      recordCycleRevision,
+      syncScheduleFromServer,
+      discardScheduleDraft,
       resetDemoData,
       importData
     ]

@@ -6,6 +6,13 @@ import {
   Brain,
   CalendarDays,
   ChevronLeft,
+  CloudOff,
+  CloudUpload,
+  Cloud,
+  FileText,
+  LogOut,
+  Repeat,
+  ShieldCheck,
   ChevronRight,
   CircleHelp,
   ClipboardList,
@@ -22,8 +29,10 @@ import {
   Timer,
   X
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStudy } from '../store/StudyStore'
+import { useAuth } from '../auth/AuthContext'
+import { useWorkspaceSync } from '../workspace/WorkspaceGate'
 import { dueRevisions, logsInRange, streakFor } from '../store/selectors'
 import { formatLongDate, formatDuration, dateKey, addDays, nowTimeLabel, greeting, weekdayOf } from '../lib/date'
 import { cx, pct } from '../lib/utils'
@@ -52,10 +61,12 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     { to: '/', label: 'Dashboard', icon: <LayoutDashboard size={16} />, group: 'main' },
     { to: '/sunday', label: 'Sunday Review', icon: <BookOpenCheck size={16} />, group: 'main' },
     { to: '/schedule', label: 'My Schedule', icon: <CalendarDays size={16} />, group: 'study' },
+    { to: '/cycles', label: 'Study Cycles', icon: <Repeat size={16} />, group: 'study' },
     { to: '/sessions', label: 'Study Sessions', icon: <Timer size={16} />, group: 'study' },
     { to: '/subjects', label: 'Subjects & Chapters', icon: <GraduationCap size={16} />, group: 'study' },
     { to: '/revision', label: 'Revision Center', icon: <RotateCcw size={16} />, badge: due.length, group: 'study' },
     { to: '/mock-tests', label: 'Mock Tests', icon: <ClipboardList size={16} />, group: 'study' },
+    { to: '/tests', label: 'PDF Test Builder', icon: <FileText size={16} />, group: 'study' },
     { to: '/mistakes', label: 'Mistake Bank', icon: <CircleHelp size={16} />, badge: state.mistakes.filter((m) => m.status === 'unresolved').length, group: 'study' },
     { to: '/analytics', label: 'Analytics', icon: <BarChart3 size={16} />, group: 'insight' },
     { to: '/assistant', label: 'AI Study Assistant', icon: <Sparkles size={16} />, group: 'insight' },
@@ -130,6 +141,66 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   )
 }
 
+function SyncIndicator() {
+  const { status } = useWorkspaceSync()
+  const meta = {
+    saved: { icon: <Cloud size={14} />, label: 'Saved', cls: 'is-ok' },
+    saving: { icon: <CloudUpload size={14} />, label: 'Saving…', cls: 'is-busy' },
+    offline: { icon: <CloudOff size={14} />, label: 'Offline — kept on this device', cls: 'is-warn' },
+    error: { icon: <CloudOff size={14} />, label: 'Sync error — retrying', cls: 'is-warn' },
+    conflict: { icon: <CloudOff size={14} />, label: 'Changed elsewhere — reload', cls: 'is-bad' }
+  }[status]
+  return (
+    <span className={cx('sync-pill', meta.cls)} title={`Sync status: ${meta.label}`} role="status">
+      {meta.icon}
+      <span className="desktop-label">{meta.label}</span>
+    </span>
+  )
+}
+
+function AccountMenu() {
+  const { state } = useStudy()
+  const { user, logout } = useAuth()
+  const navigate = useNavigate()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const close = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false)
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+  const name = user?.name ?? state.profile.name
+  return (
+    <div className="account-menu" ref={ref}>
+      <button className="profile-btn" onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open} aria-label="Open account menu">
+        <Avatar name={name} size={28} />
+        <span className="profile-btn__meta">
+          <span className="profile-btn__name">{name.split(' ')[0]}</span>
+          <span className="profile-btn__role">{state.settings.examTarget}</span>
+        </span>
+      </button>
+      {open ? (
+        <div className="account-menu__panel" role="menu">
+          <div className="account-menu__who">
+            <strong>{name}</strong>
+            <span className="text-tertiary">{user?.email}</span>
+          </div>
+          <button role="menuitem" onClick={() => { setOpen(false); navigate('/settings?section=account') }}>
+            <SettingsIcon size={14} /> Account settings
+          </button>
+          <button role="menuitem" onClick={() => { setOpen(false); navigate('/settings?section=security') }}>
+            <ShieldCheck size={14} /> Security & sessions
+          </button>
+          <button role="menuitem" className="is-danger" onClick={() => void logout()}>
+            <LogOut size={14} /> Sign out
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 export function Header({ onOpenMenu }: { onOpenMenu: () => void }) {
   const { state, today, updateSettings } = useStudy()
   const navigate = useNavigate()
@@ -195,13 +266,8 @@ export function Header({ onOpenMenu }: { onOpenMenu: () => void }) {
         <Button variant="primary" size="md" icon={<Plus size={14} />} onClick={() => navigate('/schedule?add=1')}>
           <span className="desktop-label">New session</span>
         </Button>
-        <button className="profile-btn" onClick={() => navigate('/settings')} aria-label="Open profile settings">
-          <Avatar name={state.profile.name} size={28} />
-          <span className="profile-btn__meta">
-            <span className="profile-btn__name">{state.profile.name.split(' ')[0]}</span>
-            <span className="profile-btn__role">{state.settings.examTarget}</span>
-          </span>
-        </button>
+        <SyncIndicator />
+        <AccountMenu />
       </div>
     </header>
   )

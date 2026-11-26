@@ -1,0 +1,7 @@
+{
+  "name": "canvas",
+  "version": "2.11.2",
+  "description": "Stub: StudyOS only extracts PDF text and never renders to canvas. Replaces the optional native canvas dependency of pdfjs-dist (and its vulnerable install-time tar dependency).",
+  "main": "index.js",
+  "license": "MIT"
+}

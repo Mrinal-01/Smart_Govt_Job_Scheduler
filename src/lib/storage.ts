@@ -1,51 +1,72 @@
 import type { StudyState } from '../types'
-import { STORAGE_KEY, STATE_VERSION, buildSeedState } from '../data/seed'
+import { STORAGE_KEY, STATE_VERSION } from '../data/seed'
 
-const MIGRATABLE_KEYS = ['settings', 'profile'] as const
+/*
+ * Browser storage is now only:
+ *  1. a per-user offline cache of the server workspace (never auth tokens), and
+ *  2. the read-only source for migrating the pre-account `studyos.state.v3` data.
+ * The legacy key is never deleted automatically.
+ */
 
-export function loadState(): StudyState {
+export const LEGACY_STORAGE_KEY = STORAGE_KEY
+const cacheKey = (userId: string) => `studyos.cache.v1::${userId}`
+
+export interface WorkspaceCache {
+  revision: number
+  /** true = contains edits not yet acknowledged by the server */
+  dirty: boolean
+  savedAt: string
+  data: StudyState
+}
+
+function isStudyState(value: unknown): value is StudyState {
+  const v = value as Partial<StudyState> | null
+  return Boolean(v && Array.isArray(v.subjects) && Array.isArray(v.chapters) && Array.isArray(v.schedule) && v.settings && v.profile)
+}
+
+/** The pre-account browser dataset, if this browser has one. */
+export function readLegacyBrowserState(): StudyState | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return buildSeedState()
+    const raw = localStorage.getItem(LEGACY_STORAGE_KEY)
+    if (!raw) return null
     const parsed = JSON.parse(raw) as StudyState
-    if (!parsed || parsed.version !== STATE_VERSION) return migrate(parsed)
-    if (!parsed.subjects?.length || !parsed.schedule?.length) return buildSeedState()
-    return parsed
+    if (!isStudyState(parsed)) return null
+    return { ...parsed, version: STATE_VERSION, sessions: parsed.sessions ?? {}, logs: parsed.logs ?? [], mistakes: parsed.mistakes ?? [], questions: parsed.questions ?? [], mockTests: parsed.mockTests ?? [], attempts: parsed.attempts ?? [], aiMessages: parsed.aiMessages ?? [] }
   } catch {
-    return buildSeedState()
+    return null
   }
 }
 
-/** Preserve settings + profile across a schema bump, reseed the rest. */
-function migrate(old: Partial<StudyState> | null): StudyState {
-  const fresh = buildSeedState()
-  if (!old) return fresh
-  const merged = { ...fresh }
-  MIGRATABLE_KEYS.forEach((key) => {
-    if (old[key]) {
-      // @ts-expect-error narrowing across unions of the same key
-      merged[key] = { ...fresh[key], ...old[key] }
-    }
-  })
-  return merged
-}
-
-export function saveState(state: StudyState): void {
+export function readCache(userId: string): WorkspaceCache | null {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
-  } catch (err) {
-    // Quota exceeded — trim the oldest logs and retry once.
+    const raw = localStorage.getItem(cacheKey(userId))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as WorkspaceCache
+    return isStudyState(parsed.data) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+export function writeCache(userId: string, cache: WorkspaceCache): void {
+  try {
+    localStorage.setItem(cacheKey(userId), JSON.stringify(cache))
+  } catch {
+    // Quota exceeded: the server copy is authoritative, so dropping the cache is safe.
     try {
-      const trimmed: StudyState = { ...state, logs: state.logs.slice(-120) }
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed))
+      localStorage.removeItem(cacheKey(userId))
     } catch {
-      console.warn('StudyOS: unable to persist state', err)
+      /* storage unavailable */
     }
   }
 }
 
-export function clearState(): void {
-  localStorage.removeItem(STORAGE_KEY)
+export function clearCache(userId: string): void {
+  try {
+    localStorage.removeItem(cacheKey(userId))
+  } catch {
+    /* storage unavailable */
+  }
 }
 
 export function exportState(state: StudyState): string {
@@ -54,7 +75,7 @@ export function exportState(state: StudyState): string {
 
 export function parseImportedState(raw: string): StudyState {
   const parsed = JSON.parse(raw) as StudyState
-  if (!parsed.subjects || !parsed.schedule || !parsed.settings) {
+  if (!isStudyState(parsed)) {
     throw new Error('This file is not a valid StudyOS backup.')
   }
   return { ...parsed, version: STATE_VERSION }

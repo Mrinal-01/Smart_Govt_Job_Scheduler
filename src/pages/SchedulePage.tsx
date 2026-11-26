@@ -17,7 +17,8 @@ import {
 } from 'lucide-react'
 import type { ScheduleSlot, Weekday } from '../types'
 import { Badge, Button, Card, CardHeader, ConfirmDialog, EmptyState, Field, Input, Modal, Segmented, Select, Toggle } from '../components/ui'
-import { useStudy } from '../store/StudyStore'
+import { draftScheduleOf, useStudy } from '../store/StudyStore'
+import { ScheduleGovernancePanel } from '../components/ScheduleGovernance'
 import { subjectById } from '../store/selectors'
 import { WEEKDAY_LONG, WEEKDAY_SHORT, formatDuration, formatTime, minutesFromTime, timeFromMinutes, weekdayOf } from '../lib/date'
 import { cx, sum, uid } from '../lib/utils'
@@ -72,10 +73,10 @@ export default function SchedulePage() {
 
   const slots = useMemo(
     () =>
-      state.schedule
+      draftScheduleOf(state)
         .filter((s) => s.weekday === weekday)
         .sort((a, b) => minutesFromTime(a.startTime) - minutesFromTime(b.startTime) || a.order - b.order),
-    [state.schedule, weekday]
+    [state.scheduleDraft, state.scheduleGovernance, state.schedule, weekday]
   )
 
   const totalMinutes = sum(slots.map((s) => s.durationMinutes))
@@ -119,11 +120,13 @@ export default function SchedulePage() {
         </div>
       </div>
 
+      <ScheduleGovernancePanel />
+
       <Card className="section" pad={false}>
         <div style={{ padding: 12 }}>
           <div className="day-tabs">
             {DAY_ORDER.map((d) => {
-              const count = state.schedule.filter((s) => s.weekday === d).length
+              const count = draftScheduleOf(state).filter((s) => s.weekday === d).length
               const isToday = weekdayOf(today) === d
               return (
                 <button
@@ -418,7 +421,7 @@ export default function SchedulePage() {
       >
         <div className="stack" style={{ gap: 8 }}>
           {DAY_ORDER.filter((d) => d !== weekday).map((d) => {
-            const existing = state.schedule.filter((s) => s.weekday === d).length
+            const existing = draftScheduleOf(state).filter((s) => s.weekday === d).length
             const checked = copyTargets.includes(d)
             return (
               <label
@@ -483,13 +486,13 @@ function SlotEditor({
         breakAfterMinutes: slot.breakAfterMinutes
       })
     } else {
-      const daySlots = state.schedule.filter((s) => s.weekday === weekday)
+      const daySlots = draftScheduleOf(state).filter((s) => s.weekday === weekday)
       const last = daySlots.sort((a, b) => minutesFromTime(b.endTime) - minutesFromTime(a.endTime))[0]
       const start = last ? timeFromMinutes(minutesFromTime(last.endTime) + (last.breakAfterMinutes || 15)) : '06:00'
       setDraft(emptyDraft(state.subjects[0]?.id ?? '', start))
     }
     setError('')
-  }, [open, slot, weekday, state.schedule, state.subjects])
+  }, [open, slot, weekday, state.scheduleDraft, state.scheduleGovernance, state.schedule, state.subjects])
 
   const duration = minutesFromTime(draft.endTime) - minutesFromTime(draft.startTime)
 
