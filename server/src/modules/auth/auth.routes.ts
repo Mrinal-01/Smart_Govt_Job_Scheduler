@@ -7,8 +7,6 @@ export const authRouter = Router()
 
 authRouter.post('/register', authLimiter, c.register)
 authRouter.post('/login', authLimiter, c.login)
-authRouter.post('/google', authLimiter, c.google)
-authRouter.post('/google/link', authLimiter, c.googleLink)
 authRouter.post('/verify-email', authLimiter, c.verifyEmail)
 authRouter.post('/resend-verification', emailLimiter, c.resendVerification)
 authRouter.post('/forgot-password', emailLimiter, c.forgotPassword)

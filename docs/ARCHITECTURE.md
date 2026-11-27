@@ -12,11 +12,11 @@
 │ helmet · CORS allow-list · rate limits · $-key guard · Zod validation · pino       │
 │ modules/                                                                            │
 │   auth  workspace  settings  schedule  cycles  documents  questions  exams  ai     │
-│ jobs/queue.ts (Mongo-backed worker)   integrations/ (google, mail, storage, ai)    │
+│ jobs/queue.ts (Mongo-backed worker)   integrations/ (mail, storage, ai)            │
 └──────────────┬──────────────────────────────┬──────────────────────┬───────────────┘
                │                              │                      │
           MongoDB (Mongoose)        Private file storage      Anthropic API (optional)
-                                    (STORAGE_DIR)             Google token verification
+                                    (STORAGE_DIR)
 ```
 
 ## Layers
@@ -27,7 +27,7 @@
 | Controllers | `auth.controller.ts` (others are thin enough to live in routes) | no business logic |
 | Services | `*.service.ts` | all business rules and state transitions |
 | Models | `server/src/models/*` | schema, indexes, unique/partial constraints |
-| Integrations | `server/src/integrations/*` | replaceable adapters with test seams (`setGoogleVerifier`, `setAIProvider`, `setOcrProvider`, `setMailDriver`) |
+| Integrations | `server/src/integrations/*` | replaceable adapters (AI provider, OCR provider, mail driver) selected by environment variables |
 | Jobs | `server/src/jobs/queue.ts` | durable PDF processing |
 | Frontend services | `src/lib/http.ts`, `src/auth`, `src/workspace` | network, auth state, persistence |
 | Frontend pages | `src/pages/*` | UI only — rules come from the API |

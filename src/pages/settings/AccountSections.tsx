@@ -43,10 +43,6 @@ export function AccountSection() {
         <Badge tone={user.emailVerified ? 'success' : 'warning'} dot>
           {user.emailVerified ? 'Email verified' : 'Email not verified'}
         </Badge>
-        <Badge tone={user.googleLinked ? 'info' : 'neutral'} dot>
-          {user.googleLinked ? 'Google linked' : 'Google not linked'}
-        </Badge>
-        <Badge dot>{user.hasPassword ? 'Password set' : 'Google-only sign-in'}</Badge>
         <Badge dot>Member since {new Date(user.createdAt).toLocaleDateString()}</Badge>
       </div>
       <div className="row" style={{ justifyContent: 'flex-end', marginTop: 14 }}>
@@ -64,7 +60,6 @@ interface SessionRow {
   id: string
   userAgent: string
   ip: string
-  authMethod: string
   createdAt: string
   lastUsedAt: string
   current: boolean
@@ -99,7 +94,7 @@ export function SecuritySection() {
 
   const changePassword = async () => {
     const problems = passwordProblems(pw.next, user?.email)
-    if (user?.hasPassword && !pw.current) return setPwError('Enter your current password.')
+    if (!pw.current) return setPwError('Enter your current password.')
     if (problems.length) return setPwError(problems[0])
     if (pw.next !== pw.confirm) return setPwError('Passwords do not match.')
     setBusy(true)
@@ -107,7 +102,7 @@ export function SecuritySection() {
     try {
       const r = await api<{ accessToken: string }>('/api/auth/change-password', {
         method: 'POST',
-        body: { currentPassword: pw.current || 'not-set', newPassword: pw.next, confirmPassword: pw.confirm }
+        body: { currentPassword: pw.current, newPassword: pw.next, confirmPassword: pw.confirm }
       })
       setAccessToken(r.accessToken)
       setPw({ current: '', next: '', confirm: '' })
@@ -134,7 +129,7 @@ export function SecuritySection() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <strong>{deviceLabel(s.userAgent)}</strong> {s.current ? <Badge tone="success" size="sm">This device</Badge> : null}
                   <div className="text-tertiary" style={{ fontSize: 12 }}>
-                    {s.authMethod === 'google' ? 'Google' : 'Password'} · signed in {new Date(s.createdAt).toLocaleString()} · last active {new Date(s.lastUsedAt).toLocaleString()}
+                    Signed in {new Date(s.createdAt).toLocaleString()} · last active {new Date(s.lastUsedAt).toLocaleString()}
                     {s.ip ? ` · ${s.ip}` : ''}
                   </div>
                 </div>
@@ -165,13 +160,11 @@ export function SecuritySection() {
         </div>
       </Card>
       <Card>
-        <CardHeader title={user?.hasPassword ? 'Change password' : 'Set a password'} subtitle="Changing it signs out every other device" icon={<KeyRound size={15} />} />
+        <CardHeader title="Change password" subtitle="Changing it signs out every other device" icon={<KeyRound size={15} />} />
         <div className="grid grid--3" style={{ gap: 12 }}>
-          {user?.hasPassword ? (
-            <Field label="Current password">
-              <Input type="password" autoComplete="current-password" value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} />
-            </Field>
-          ) : null}
+          <Field label="Current password">
+            <Input type="password" autoComplete="current-password" value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} />
+          </Field>
           <Field label="New password">
             <Input type="password" autoComplete="new-password" value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} />
           </Field>

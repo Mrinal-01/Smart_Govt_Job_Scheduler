@@ -116,11 +116,6 @@ class AnthropicProvider implements AIProvider {
   }
 }
 
-let provider: AIProvider | null = env.aiEnabled ? new AnthropicProvider() : null
+const provider: AIProvider | null = env.aiEnabled ? new AnthropicProvider() : null
 
 export const getAIProvider = () => provider
-
-/** Test seam: inject a fake provider (or null to simulate "not configured"). */
-export function setAIProvider(next: AIProvider | null) {
-  provider = next
-}

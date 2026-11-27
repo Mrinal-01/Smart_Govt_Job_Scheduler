@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Brain, Inbox, Mail } from 'lucide-react'
 import { useAuth } from '../../auth/AuthContext'
@@ -47,71 +47,6 @@ export function PasswordRules({ password, email }: { password: string; email?: s
     </ul>
   ) : (
     <p className="field__hint text-success">Password meets the policy.</p>
-  )
-}
-
-interface GsiWindow extends Window {
-  google?: {
-    accounts: {
-      id: {
-        initialize: (opts: { client_id: string; callback: (r: { credential: string }) => void; ux_mode?: string }) => void
-        renderButton: (el: HTMLElement, opts: Record<string, unknown>) => void
-      }
-    }
-  }
-}
-
-/**
- * Google Identity Services button. Renders only when the server reports a
- * configured client id; otherwise shows an honest "not configured" note.
- */
-export function GoogleButton({ onCredential, text = 'continue_with' }: { onCredential: (credential: string) => void; text?: string }) {
-  const { config } = useAuth()
-  const ref = useRef<HTMLDivElement>(null)
-  const cb = useRef(onCredential)
-  cb.current = onCredential
-  const [failed, setFailed] = useState(false)
-
-  useEffect(() => {
-    const clientId = config?.googleClientId
-    if (!clientId || !ref.current) return
-    const render = () => {
-      const g = (window as GsiWindow).google
-      if (!g || !ref.current) return
-      g.accounts.id.initialize({ client_id: clientId, callback: (r) => cb.current(r.credential) })
-      g.accounts.id.renderButton(ref.current, { theme: 'outline', size: 'large', text, shape: 'rectangular', width: 320 })
-    }
-    if ((window as GsiWindow).google) return render()
-    let script = document.querySelector<HTMLScriptElement>('script[data-gsi]')
-    if (!script) {
-      script = document.createElement('script')
-      script.src = 'https://accounts.google.com/gsi/client'
-      script.async = true
-      script.dataset.gsi = '1'
-      document.head.appendChild(script)
-    }
-    script.addEventListener('load', render)
-    script.addEventListener('error', () => setFailed(true))
-    return () => script?.removeEventListener('load', render)
-  }, [config?.googleClientId, text])
-
-  if (!config) return null
-  if (!config.googleSignIn) {
-    return <p className="auth-note">Google sign-in is not configured on this server (set GOOGLE_CLIENT_ID).</p>
-  }
-  return (
-    <div className="google-btn">
-      <div ref={ref} />
-      {failed ? <p className="auth-note text-danger">Could not load Google sign-in. Check your connection.</p> : null}
-    </div>
-  )
-}
-
-export function Divider({ label = 'or' }: { label?: string }) {
-  return (
-    <div className="auth-divider" role="separator">
-      <span>{label}</span>
-    </div>
   )
 }
 

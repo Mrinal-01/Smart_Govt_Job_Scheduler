@@ -8,7 +8,7 @@
 | MongoDB | 6+ (tested with 8.0) | local `mongod` on `127.0.0.1:27017` is the default |
 | poppler-utils + tesseract-ocr | optional | only needed to read **scanned** PDFs (OCR) |
 
-No paid service is required to run the app or the test suite.
+No paid service is required to run the app.
 
 ## 1. Install
 
@@ -38,13 +38,14 @@ On first sign-in you choose how to create your workspace:
 
 Run the pieces separately with `npm run dev:api` and `npm run dev:web`.
 
-## 3. Optional integrations
+### Master account (development only)
 
-### Google sign-in
-1. Google Cloud Console → APIs & Services → Credentials → *Create OAuth client ID* → **Web application**.
-2. Authorized JavaScript origins: `http://localhost:3000` (and your production origin).
-3. Set `GOOGLE_CLIENT_ID` in `server/.env` and restart the API. The button appears automatically
-   (`/api/config` publishes the client id; no frontend rebuild needed).
+```bash
+npm run seed:master
+```
+Creates or resets `tester@studyos.local` / `StudyOS-Test-2026`. The email is already verified, and the account has demo data, a published schedule v1 and 36 verified sample questions. Use `samples/sample-question-paper.pdf` to try the PDF upload. Override the login with `MASTER_ACCOUNT_EMAIL` / `MASTER_ACCOUNT_PASSWORD`. The script refuses to run with `NODE_ENV=production` and only touches that one account. It is a normal account: there is deliberately no password that opens every account, because that would be a backdoor.
+
+## 3. Optional integrations
 
 ### Email delivery
 Set `MAIL_DRIVER=resend`, `RESEND_API_KEY`, and a `MAIL_FROM` on a domain verified in Resend.
@@ -71,20 +72,13 @@ as “OCR unavailable” and the document can be **Reprocessed** after installin
 Not required. PDF processing uses a durable MongoDB-backed queue (`ProcessingJob`) that resumes
 after restarts. See ARCHITECTURE.md for the swap path.
 
-## 4. Tests & checks
+## 4. Checks
 
 ```bash
-npm run check          # typecheck web + API, run both test suites, production build
-npm test               # web tests only (Vitest + Testing Library, jsdom)
-npm --prefix server test   # API tests (Vitest + Supertest) — needs MongoDB running
+npm run check          # typecheck web + API, then build both
 ```
-API tests create and drop a throwaway database per file (`MONGODB_TEST_URI`, default
-`mongodb://127.0.0.1:27017`). Google, AI, OCR and email are faked in tests.
-
-End-to-end smoke test against a running `npm run dev`:
-```bash
-npm --prefix server run e2e:smoke
-```
+The automated test suites were removed at the project owner's request. Verify features by
+signing in with the master account (above) and using the app.
 
 ## 5. Production build
 

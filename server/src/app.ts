@@ -33,19 +33,18 @@ export function createApp() {
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", 'https://accounts.google.com/gsi/client'],
-          styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com', 'https://accounts.google.com/gsi/style'],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
           fontSrc: ["'self'", 'https://fonts.gstatic.com'],
-          imgSrc: ["'self'", 'data:', 'https://*.googleusercontent.com'],
-          connectSrc: ["'self'", 'https://accounts.google.com/gsi/'],
-          frameSrc: ["'self'", 'blob:', 'https://accounts.google.com/gsi/'],
+          imgSrc: ["'self'", 'data:'],
+          connectSrc: ["'self'"],
+          frameSrc: ["'self'", 'blob:'],
           frameAncestors: ["'self'"],
           objectSrc: ["'none'"],
           // Only force HTTPS sub-resources when the deployment is HTTPS (COOKIE_SECURE).
           upgradeInsecureRequests: env.cookieSecure ? [] : null
         }
-      },
-      crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' }
+      }
     })
   )
   app.use(

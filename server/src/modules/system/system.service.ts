@@ -8,8 +8,6 @@ import { policy } from '../schedule/schedule.service.js'
 export async function describeIntegrations() {
   const ocr = getOcrProvider()
   return {
-    googleSignIn: env.googleEnabled,
-    googleClientId: env.GOOGLE_CLIENT_ID ?? null,
     ai: { configured: Boolean(getAIProvider()), provider: getAIProvider()?.name ?? null, model: getAIProvider()?.model ?? null },
     ocr: { provider: ocr.name, available: await ocr.available() },
     mail: { driver: mailDriverName(), delivers: mailDriverName() === 'resend' },

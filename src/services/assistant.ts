@@ -17,9 +17,8 @@ import { pct, round, sum } from '../lib/utils'
  * Local, deterministic "demo assistant".
  *
  * This is NOT an AI model. It is a rules-based responder over the user's real
- * local study data, every message flagged `demo: true` in the UI. The same
- * prompts can be sent to POST /api/v1/ai/chat once an OpenAI key lives on the
- * server — see docs/API_CONTRACT.md § AI.
+ * local study data, every message flagged `demo: true` in the UI. Live model
+ * answers go through the server's /api/ai endpoints (see docs/API_DOCUMENTATION.md).
  */
 
 export interface AssistantReply {

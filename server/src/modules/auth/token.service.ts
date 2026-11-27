@@ -40,19 +40,6 @@ export function verifyAccessToken(token: string): AccessClaims {
   }
 }
 
-/** Short-lived signed ticket for multi-step flows (e.g. Google account linking). */
-export function signTicket(purpose: string, data: Record<string, unknown>, ttlSeconds = 600) {
-  return jwt.sign({ ...data, purpose }, env.jwtSecret, { algorithm: 'HS256', expiresIn: ttlSeconds, issuer: ISSUER, audience: `${AUDIENCE}:${purpose}` })
-}
-
-export function verifyTicket<T>(purpose: string, ticket: string): T {
-  try {
-    return jwt.verify(ticket, env.jwtSecret, { algorithms: ['HS256'], issuer: ISSUER, audience: `${AUDIENCE}:${purpose}` }) as T
-  } catch {
-    throw unauthorized('This confirmation has expired. Please start again.', 'TICKET_INVALID')
-  }
-}
-
 const clientMeta = (req: Request) => ({
   userAgent: (req.get('user-agent') ?? '').slice(0, 400),
   ip: req.ip ?? ''
@@ -61,7 +48,6 @@ const clientMeta = (req: Request) => ({
 export async function createRefreshSession(
   userId: Types.ObjectId,
   req: Request,
-  authMethod: 'password' | 'google',
   familyId: string = crypto.randomUUID()
 ) {
   const token = randomToken(48)
@@ -70,7 +56,6 @@ export async function createRefreshSession(
     familyId,
     tokenHash: sha256(token),
     expiresAt: new Date(Date.now() + env.REFRESH_TOKEN_TTL_DAYS * 86_400_000),
-    authMethod,
     ...clientMeta(req)
   })
   return { token, session }
@@ -102,7 +87,7 @@ export async function rotateRefreshToken(token: string, req: Request) {
     }
     throw unauthorized('Session ended. Please sign in again.', 'REFRESH_REVOKED')
   }
-  const next = await createRefreshSession(current.userId, req, current.authMethod as 'password' | 'google', current.familyId)
+  const next = await createRefreshSession(current.userId, req, current.familyId)
   await RefreshSession.updateOne({ _id: current._id }, { $set: { replacedByHash: next.session.tokenHash } })
   return { userId: current.userId, familyId: current.familyId, ...next }
 }

@@ -1,7 +1,6 @@
 import { Router } from 'express'
 import rateLimit from 'express-rate-limit'
 import { z } from 'zod'
-import { env } from '../../config/env.js'
 import { asyncHandler } from '../../lib/errors.js'
 import { objectId, parse } from '../../lib/validate.js'
 import { authOf, requireAuth } from '../../middleware/auth.js'
@@ -17,7 +16,6 @@ const aiBurst = rateLimit({
   limit: 10,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
-  skip: () => env.isTest,
   keyGenerator: (req) => String(req.auth?.userId ?? req.ip),
   handler: (_req, res) => res.status(429).json({ error: { code: 'RATE_LIMITED', message: 'Too many AI requests — wait a minute.' } })
 })

@@ -4,8 +4,7 @@ import { MailCheck, UserPlus } from 'lucide-react'
 import { useAuth } from '../../auth/AuthContext'
 import { ApiError, api, errorMessage } from '../../lib/http'
 import { Button, Checkbox, Field, Input } from '../../components/ui'
-import { AuthLayout, DevMailbox, Divider, PasswordRules, passwordProblems } from './AuthShared'
-import { GoogleFlow } from './LoginPage'
+import { AuthLayout, DevMailbox, PasswordRules, passwordProblems } from './AuthShared'
 
 type Errors = Partial<Record<'name' | 'email' | 'password' | 'confirmPassword' | 'acceptTerms' | 'form', string>>
 
@@ -127,8 +126,6 @@ export default function RegisterPage() {
           Create account
         </Button>
       </form>
-      <Divider />
-      <GoogleFlow acceptTermsUpfront={form.acceptTerms} onDone={() => navigate('/', { replace: true })} />
     </AuthLayout>
   )
 }

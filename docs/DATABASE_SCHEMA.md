@@ -8,9 +8,8 @@ Ownership failures return **404** (existence is not leaked). Timestamps (`create
 
 | Collection | Key fields | Indexes / constraints |
 |---|---|---|
-| `users` | name, email (normalized), passwordHash (Argon2id, `select:false`, null for Google-only), emailVerified(+At), termsAcceptedAt, role (`student`/`admin`), status, tokenVersion, failedLoginCount, lockedUntil, lastLoginAt | **unique** email |
-| `authaccounts` | userId, provider (`google`), providerUserId (Google `sub`), email, emailVerified, linkedAt | **unique** (provider, providerUserId); **unique** (userId, provider) |
-| `refreshsessions` | userId, familyId, tokenHash (sha256), expiresAt, revokedAt, revokedReason, replacedByHash, userAgent, ip, lastUsedAt, authMethod | **unique** tokenHash; (userId, revokedAt); familyId; **TTL** expiresAt |
+| `users` | name, email (normalized), passwordHash (Argon2id, `select:false`), emailVerified(+At), termsAcceptedAt, role (`student`/`admin`), status, tokenVersion, failedLoginCount, lockedUntil, lastLoginAt | **unique** email |
+| `refreshsessions` | userId, familyId, tokenHash (sha256), expiresAt, revokedAt, revokedReason, replacedByHash, userAgent, ip, lastUsedAt | **unique** tokenHash; (userId, revokedAt); familyId; **TTL** expiresAt |
 | `emailverificationtokens`, `passwordresettokens` | userId, tokenHash, expiresAt, usedAt | **unique** tokenHash; **TTL** expiresAt |
 
 ## Workspace & settings
@@ -63,7 +62,7 @@ the normalized collections below.
 
 ## Mapping to the requested model list
 
-User, AuthAccount, RefreshSession, EmailVerificationToken, PasswordResetToken, Schedule,
+User, RefreshSession, EmailVerificationToken, PasswordResetToken, Schedule,
 ScheduleVersion, StudyCycle, CycleSubjectBlock, StudyLog, RevisionTask, RevisionLog,
 UploadedDocument, QuestionBank (`questions`), MockTest (templates are `kind: template`),
 MockTestAttempt, MockTestAnswer, MistakeBank (`exammistakes` + legacy mistakes in the workspace),

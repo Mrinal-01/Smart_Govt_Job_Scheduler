@@ -6,7 +6,7 @@ import { env } from '../config/env.js'
  * passwords, tokens and cookies never reach log sinks.
  */
 export const logger = pino({
-  level: env.LOG_LEVEL ?? (env.isTest ? 'silent' : env.isProd ? 'info' : 'debug'),
+  level: env.LOG_LEVEL ?? (env.isProd ? 'info' : 'debug'),
   redact: {
     paths: [
       'req.headers.authorization',
@@ -23,7 +23,7 @@ export const logger = pino({
     censor: '[redacted]'
   },
   transport:
-    !env.isProd && !env.isTest
+    !env.isProd
       ? { target: 'pino-pretty', options: { colorize: true, translateTime: 'HH:MM:ss', ignore: 'pid,hostname' } }
       : undefined
 })

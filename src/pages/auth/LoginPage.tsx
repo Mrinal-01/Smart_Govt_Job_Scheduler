@@ -3,8 +3,8 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, LogIn } from 'lucide-react'
 import { useAuth } from '../../auth/AuthContext'
 import { ApiError, api, errorMessage } from '../../lib/http'
-import { Button, Checkbox, Field, Input, Modal } from '../../components/ui'
-import { AuthLayout, Divider, GoogleButton } from './AuthShared'
+import { Button, Field, Input } from '../../components/ui'
+import { AuthLayout } from './AuthShared'
 
 export default function LoginPage() {
   const { login } = useAuth()
@@ -85,104 +85,6 @@ export default function LoginPage() {
           Sign in
         </Button>
       </form>
-      <Divider />
-      <GoogleFlow onDone={() => navigate(from, { replace: true })} />
     </AuthLayout>
-  )
-}
-
-/** Google sign-in with the two follow-ups the server may require: terms acceptance and account-link confirmation. */
-export function GoogleFlow({ onDone, acceptTermsUpfront = false }: { onDone: () => void; acceptTermsUpfront?: boolean }) {
-  const { googleSignIn, linkGoogle } = useAuth()
-  const [credential, setCredential] = useState<string | null>(null)
-  const [need, setNeed] = useState<'terms' | 'link' | null>(null)
-  const [ticket, setTicket] = useState<{ linkTicket: string; email: string } | null>(null)
-  const [terms, setTerms] = useState(false)
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
-
-  const attempt = async (cred: string, acceptTerms?: boolean) => {
-    setError('')
-    setBusy(true)
-    try {
-      await googleSignIn(cred, acceptTerms)
-      setNeed(null)
-      onDone()
-    } catch (err) {
-      if (err instanceof ApiError && err.code === 'TERMS_REQUIRED') {
-        setCredential(cred)
-        setNeed('terms')
-      } else if (err instanceof ApiError && err.code === 'ACCOUNT_LINK_REQUIRED') {
-        setTicket(err.details as { linkTicket: string; email: string })
-        setNeed('link')
-      } else setError(errorMessage(err))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const confirmLink = async () => {
-    if (!ticket) return
-    setBusy(true)
-    setError('')
-    try {
-      await linkGoogle(ticket.linkTicket, password)
-      setNeed(null)
-      onDone()
-    } catch (err) {
-      setError(errorMessage(err))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <>
-      <GoogleButton onCredential={(c) => void attempt(c, acceptTermsUpfront || undefined)} />
-      {error && !need ? <div className="callout callout--danger" style={{ marginTop: 10 }}>{error}</div> : null}
-      <Modal
-        open={need === 'terms'}
-        onClose={() => setNeed(null)}
-        title="Create your StudyOS account"
-        size="sm"
-        footer={
-          <>
-            <Button onClick={() => setNeed(null)}>Cancel</Button>
-            <Button variant="primary" disabled={!terms} loading={busy} onClick={() => credential && attempt(credential, true)}>
-              Continue
-            </Button>
-          </>
-        }
-      >
-        <p className="text-secondary" style={{ marginBottom: 12 }}>
-          No StudyOS account uses this Google email yet. Accept the terms to create one.
-        </p>
-        <Checkbox checked={terms} onChange={setTerms} label={<>I accept the <Link to="/terms" target="_blank">Terms of Use</Link></>} />
-        {error ? <div className="callout callout--danger" style={{ marginTop: 10 }}>{error}</div> : null}
-      </Modal>
-      <Modal
-        open={need === 'link'}
-        onClose={() => setNeed(null)}
-        title="Link Google to your account"
-        size="sm"
-        footer={
-          <>
-            <Button onClick={() => setNeed(null)}>Cancel</Button>
-            <Button variant="primary" loading={busy} disabled={!password} onClick={confirmLink}>
-              Link & sign in
-            </Button>
-          </>
-        }
-      >
-        <p className="text-secondary" style={{ marginBottom: 12 }}>
-          An account for <strong>{ticket?.email}</strong> already exists. For your security we never link accounts automatically — enter that account’s password to confirm.
-        </p>
-        <Field label="StudyOS password" htmlFor="link-password">
-          <Input id="link-password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
-        </Field>
-        {error ? <div className="callout callout--danger" style={{ marginTop: 10 }}>{error}</div> : null}
-      </Modal>
-    </>
   )
 }

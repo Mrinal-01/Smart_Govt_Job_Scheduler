@@ -96,17 +96,6 @@ export const changePassword = asyncHandler(async (req, res) => {
   res.json(await auth.changePassword(userId, sessionId, input.currentPassword, input.newPassword))
 })
 
-export const google = asyncHandler(async (req, res) => {
-  const input = parse(v.googleSchema, req.body)
-  const result = await auth.googleSignIn(input, req)
-  sendSession(res, result, result.kind === 'registered' ? 201 : 200)
-})
-
-export const googleLink = asyncHandler(async (req, res) => {
-  const input = parse(v.googleLinkSchema, req.body)
-  sendSession(res, await auth.linkGoogle(input, req))
-})
-
 export const sessions = asyncHandler(async (req, res) => {
   const { userId, sessionId } = authOf(req)
   res.json({ sessions: await auth.listSessions(userId, sessionId) })

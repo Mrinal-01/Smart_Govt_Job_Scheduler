@@ -10,10 +10,9 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit -p .",
-    "test": "vitest run",
     "migrate:import-local": "tsx src/scripts/importLocalBackup.ts",
     "admin:promote": "tsx src/scripts/promoteAdmin.ts",
-    "e2e:smoke": "tsx scripts/e2e-smoke.mts"
+    "seed:master": "tsx scripts/seed-master-account.mts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.14.0",
@@ -24,7 +23,6 @@
     "dotenv": "^16.6.1",
     "express": "^4.22.3",
     "express-rate-limit": "^7.5.1",
-    "google-auth-library": "^9.15.1",
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^8.24.11",
@@ -40,16 +38,11 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^1.4.13",
     "@types/node": "^20.19.43",
-    "@types/supertest": "^6.0.3",
-    "pdf-lib": "^1.17.1",
     "pino-pretty": "^11.3.0",
-    "supertest": "^7.3.2",
     "tsx": "^4.23.15",
-    "typescript": "^5.9.3",
-    "vitest": "^2.1.9"
+    "typescript": "^5.9.3"
   },
   "overrides": {
-    "canvas": "$canvas",
-    "uuid": "^11.1.1"
+    "canvas": "$canvas"
   }
 }

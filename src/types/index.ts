@@ -1,8 +1,7 @@
 /* ============================================================
    StudyOS — Core domain types
-   These interfaces intentionally mirror the proposed MongoDB
-   documents (see docs/API_CONTRACT.md) so the mock service layer
-   can be replaced by a real Node/Express API without UI changes.
+   The workspace state (StudyState) is stored per user on the server
+   in the StudyWorkspace document (see docs/ARCHITECTURE.md).
    ============================================================ */
 
 export type ID = string

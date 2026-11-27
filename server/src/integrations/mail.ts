@@ -16,7 +16,7 @@ export interface MailDriver {
   send(message: MailMessage): Promise<void>
 }
 
-/** Recent messages kept in memory for development and tests only. */
+/** Recent messages kept in memory for the development mailbox only. */
 export const devOutbox: Array<MailMessage & { sentAt: string }> = []
 
 const consoleDriver: MailDriver = {
@@ -56,11 +56,7 @@ const disabledDriver: MailDriver = {
   }
 }
 
-let driver: MailDriver = env.MAIL_DRIVER === 'resend' ? resendDriver : env.MAIL_DRIVER === 'disabled' ? disabledDriver : consoleDriver
-
-export function setMailDriver(next: MailDriver) {
-  driver = next
-}
+const driver: MailDriver = env.MAIL_DRIVER === 'resend' ? resendDriver : env.MAIL_DRIVER === 'disabled' ? disabledDriver : consoleDriver
 
 export const mailDriverName = () => driver.name
 

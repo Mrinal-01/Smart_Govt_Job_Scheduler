@@ -29,6 +29,8 @@ const BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(
 const CSRF_HEADER = { 'X-StudyOS-CSRF': '1' }
 
 let accessToken: string | null = null
+/** Why the last refresh failed: 'no-session' means signed out for real; anything else is temporary. */
+export let lastRefreshFailure: 'no-session' | 'temporary' | null = null
 let refreshing: Promise<boolean> | null = null
 let onSessionLost: (() => void) | null = null
 let onTokens: ((payload: TokenPayload) => void) | null = null
@@ -60,27 +62,35 @@ async function parseError(res: Response): Promise<ApiError> {
   return new ApiError(body.error?.message ?? fallback, res.status, body.error?.code ?? 'ERROR', body.error?.details)
 }
 
-/** Exchanges the refresh cookie for a new access token. Shared across concurrent callers. */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+/** Backoff between attempts when the server is briefly unavailable (restart, proxy hiccup, rate limit). */
+const RETRY_DELAYS_MS = [400, 800, 1500, 2500, 4000]
+
+/**
+ * Exchanges the refresh cookie for a new access token. Shared across concurrent callers.
+ * 401/403 mean the session is really gone; anything else (network error, 5xx, 429,
+ * another tab rotating the cookie) is retried with backoff before giving up.
+ */
 export function refreshSession(): Promise<boolean> {
   if (refreshing) return refreshing
   refreshing = (async () => {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+      if (attempt > 0) await sleep(RETRY_DELAYS_MS[attempt - 1])
       const res = await fetch(`${BASE}/api/auth/refresh`, { method: 'POST', credentials: 'include', headers: CSRF_HEADER }).catch(() => null)
-      if (!res) return false
-      if (res.ok) {
+      if (res?.ok) {
+        lastRefreshFailure = null
         const payload = (await res.json()) as TokenPayload
         accessToken = payload.accessToken
         onTokens?.(payload)
         return true
       }
-      const err = await parseError(res)
-      // Another tab rotated the cookie a moment ago — the browser now holds the new one.
-      if (err.code === 'REFRESH_RACE') {
-        await new Promise((r) => setTimeout(r, 300 * (attempt + 1)))
-        continue
+      if (res && (res.status === 401 || res.status === 403)) {
+        lastRefreshFailure = 'no-session'
+        return false
       }
-      return false
+      // Network error, 5xx, 429 or REFRESH_RACE (another tab just rotated the cookie): retry.
     }
+    lastRefreshFailure = 'temporary'
     return false
   })().finally(() => {
     refreshing = null
@@ -117,8 +127,12 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   }
   if (res.status === 401 && auth) {
     const err = await parseError(res.clone())
-    if (['TOKEN_EXPIRED', 'TOKEN_INVALID', 'UNAUTHORIZED'].includes(err.code) && (await refreshSession())) {
-      res = await doFetch()
+    if (['TOKEN_EXPIRED', 'TOKEN_INVALID', 'UNAUTHORIZED'].includes(err.code)) {
+      if (await refreshSession()) res = await doFetch()
+      else if (lastRefreshFailure === 'temporary') {
+        // The server is briefly unreachable — keep the user signed in and let them retry.
+        throw new ApiError('Cannot reach the StudyOS server right now. Please try again in a moment.', 0, 'NETWORK_ERROR')
+      }
     }
     if (res.status === 401) {
       const final = await parseError(res)

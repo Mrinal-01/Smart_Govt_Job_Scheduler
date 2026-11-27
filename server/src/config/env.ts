@@ -17,7 +17,7 @@ const int = (fallback: number, min = 0, max = Number.MAX_SAFE_INTEGER) =>
     .pipe(z.number().int().min(min).max(max))
 
 const schema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  NODE_ENV: z.enum(['development', 'production']).default('development'),
   PORT: int(4000, 1, 65535),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).optional(),
   MONGODB_URI: z.string().default('mongodb://127.0.0.1:27017/studyos'),
@@ -34,8 +34,6 @@ const schema = z.object({
   COOKIE_SECURE: z.string().optional(),
   COOKIE_SAMESITE: z.enum(['strict', 'lax', 'none']).default('strict'),
   REQUIRE_EMAIL_VERIFICATION: bool(true),
-
-  GOOGLE_CLIENT_ID: z.string().optional(),
 
   MAIL_DRIVER: z.enum(['console', 'resend', 'disabled']).default('console'),
   MAIL_FROM: z.string().default('StudyOS <no-reply@studyos.local>'),
@@ -87,7 +85,6 @@ const aiKey = raw.AI_API_KEY || raw.ANTHROPIC_API_KEY
 export const env = {
   ...raw,
   isProd: raw.NODE_ENV === 'production',
-  isTest: raw.NODE_ENV === 'test',
   corsOrigins: raw.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean),
   jwtSecret: secret('JWT_ACCESS_SECRET', raw.JWT_ACCESS_SECRET),
   fileSigningSecret: secret('FILE_SIGNING_SECRET', raw.FILE_SIGNING_SECRET),
@@ -96,8 +93,7 @@ export const env = {
   maxUploadBytes: raw.MAX_UPLOAD_MB * 1024 * 1024,
   aiApiKey: aiKey,
   aiModel: raw.AI_MODEL || 'claude-opus-5-5',
-  aiEnabled: raw.AI_PROVIDER === 'anthropic' && Boolean(aiKey),
-  googleEnabled: Boolean(raw.GOOGLE_CLIENT_ID)
+  aiEnabled: raw.AI_PROVIDER === 'anthropic' && Boolean(aiKey)
 }
 
 export type Env = typeof env

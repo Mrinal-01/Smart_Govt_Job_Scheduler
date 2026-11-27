@@ -29,25 +29,6 @@ export type UserDoc = HydratedDocument<InferSchemaType<typeof userSchema>>
 export const User = mongoose.model('User', userSchema)
 
 /* ------------------------------------------------------------------ */
-/* External identity links (Google)                                    */
-/* ------------------------------------------------------------------ */
-
-const authAccountSchema = new Schema(
-  {
-    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    provider: { type: String, enum: ['google'], required: true },
-    providerUserId: { type: String, required: true },
-    email: { type: String, default: null },
-    emailVerified: { type: Boolean, default: false },
-    linkedAt: { type: Date, default: () => new Date() }
-  },
-  { timestamps: true }
-)
-authAccountSchema.index({ provider: 1, providerUserId: 1 }, { unique: true })
-authAccountSchema.index({ userId: 1, provider: 1 }, { unique: true })
-export const AuthAccount = mongoose.model('AuthAccount', authAccountSchema)
-
-/* ------------------------------------------------------------------ */
 /* Refresh sessions — opaque tokens, stored hashed, rotated on use     */
 /* ------------------------------------------------------------------ */
 
@@ -63,8 +44,7 @@ const refreshSessionSchema = new Schema(
     replacedByHash: { type: String, default: null },
     userAgent: { type: String, default: '', maxlength: 400 },
     ip: { type: String, default: '' },
-    lastUsedAt: { type: Date, default: () => new Date() },
-    authMethod: { type: String, enum: ['password', 'google'], default: 'password' }
+    lastUsedAt: { type: Date, default: () => new Date() }
   },
   { timestamps: true }
 )

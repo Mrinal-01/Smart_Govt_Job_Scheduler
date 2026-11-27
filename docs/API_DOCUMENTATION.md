@@ -1,7 +1,6 @@
 # API documentation
 
-Base path `/api`. JSON in/out. Every endpoint listed here is **implemented and covered by tests**
-unless noted. (`docs/API_CONTRACT.md` is the earlier design spec and is superseded by this file.)
+Base path `/api`. JSON in/out. Every endpoint listed here is implemented.
 
 **Auth:** `Authorization: Bearer <accessToken>` (15 min JWT) unless marked *public*.
 The refresh token is the HttpOnly cookie `studyos_rt` (path `/api/auth`); cookie endpoints also
@@ -15,7 +14,7 @@ Resources owned by another user return `404 NOT_FOUND`.
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/health` | *public* — `{status, db}` |
-| GET | `/config` | *public* — Google client id, AI/OCR/mail availability, upload limits, schedule policy |
+| GET | `/config` | *public* — AI/OCR/mail availability, upload limits, schedule policy |
 | GET | `/dev/mailbox` | *public, development only* — emails the console driver captured |
 
 ## Auth (`/auth`)
@@ -32,12 +31,10 @@ Resources owned by another user return `404 NOT_FOUND`.
 | POST | `/forgot-password` | `{email}` → 202 generic |
 | POST | `/reset-password` | `{token, password, confirmPassword}`; signs out all devices |
 | POST | `/change-password` | `{currentPassword, newPassword, confirmPassword}` → new access token; other sessions revoked |
-| POST | `/google` | `{credential (Google ID token), acceptTerms?}` → session; 409 `TERMS_REQUIRED`, 409 `ACCOUNT_LINK_REQUIRED` (`details.linkTicket`), 422 `GOOGLE_EMAIL_MISSING` / `GOOGLE_EMAIL_UNVERIFIED`, 503 `GOOGLE_NOT_CONFIGURED` |
-| POST | `/google/link` | `{linkTicket, password}` → session (explicit link confirmation) |
-| GET | `/sessions` | active devices `[{id, userAgent, ip, authMethod, createdAt, lastUsedAt, current}]` |
+| GET | `/sessions` | active devices `[{id, userAgent, ip, createdAt, lastUsedAt, current}]` |
 | DELETE | `/sessions/:id` | sign out one device |
 
-Rate limits: credential endpoints 10/15 min/IP, email endpoints 5/h/IP, refresh 60/15 min, API 600/5 min.
+Rate limits: credential endpoints 10/15 min/IP, email endpoints 5/h/IP, refresh 600/15 min, API 600/5 min.
 
 ## Workspace (`/workspace`)
 | Method | Path | Notes |

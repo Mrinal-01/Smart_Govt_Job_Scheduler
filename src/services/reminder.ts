@@ -14,7 +14,7 @@ export interface ReminderCandidate {
 
 /**
  * Pure evaluation of the reminder state machine — no side effects, so it can be
- * simulated against any clock in tests and reused by a future backend cron.
+ * evaluated against any clock and reused by a future backend cron.
  *
  *   ended  →  awaiting-completion (grace window)
  *   grace  →  overdue              (repeat every `repeatMinutes`)

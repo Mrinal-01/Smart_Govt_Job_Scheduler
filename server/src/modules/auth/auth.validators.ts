@@ -51,14 +51,4 @@ export const changePasswordSchema = z
   .object({ currentPassword: z.string().min(1).max(128), newPassword: passwordSchema, confirmPassword: z.string() })
   .refine((d) => d.newPassword === d.confirmPassword, { path: ['confirmPassword'], message: 'Passwords do not match' })
 
-export const googleSchema = z.object({
-  credential: z.string().min(20).max(5000),
-  acceptTerms: z.boolean().optional()
-})
-
-export const googleLinkSchema = z.object({
-  linkTicket: z.string().min(20).max(4000),
-  password: z.string().min(1).max(128)
-})
-
 export const updateProfileSchema = z.object({ name: z.string().trim().min(2).max(80) })

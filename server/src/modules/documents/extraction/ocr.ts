@@ -63,9 +63,6 @@ class NoOcrProvider implements OcrProvider {
   }
 }
 
-let provider: OcrProvider = env.OCR_PROVIDER === 'none' ? new NoOcrProvider() : new TesseractCliProvider()
+const provider: OcrProvider = env.OCR_PROVIDER === 'none' ? new NoOcrProvider() : new TesseractCliProvider()
 
 export const getOcrProvider = () => provider
-export function setOcrProvider(next: OcrProvider | null) {
-  provider = next ?? new NoOcrProvider()
-}

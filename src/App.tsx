@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { AlertTriangle, ArrowRight, BellRing, Check, Clock, Volume2, VolumeX } from 'lucide-react'
 import { Header, Sidebar } from './components/AppShell'
 import { Badge, Button, ToastStack } from './components/ui'
@@ -240,10 +240,43 @@ function FullScreenLoading() {
   )
 }
 
+/** Shown when a signed-in browser cannot reach the server on load. Retries automatically. */
+function Reconnecting() {
+  const { retrySession } = useAuth()
+  const [busy, setBusy] = useState(false)
+  return (
+    <div className="gate-center">
+      <div className="stack" style={{ alignItems: 'center', textAlign: 'center', maxWidth: 380 }}>
+        <div className="loading-block">
+          <span className="spin" style={{ display: 'inline-flex' }}>
+            <Clock size={16} />
+          </span>
+          <span>Reconnecting to StudyOS…</span>
+        </div>
+        <p className="text-secondary">The server is not responding right now. You are still signed in — this page will continue as soon as it is back.</p>
+        <div className="row" style={{ gap: 8 }}>
+          <Button
+            variant="primary"
+            loading={busy}
+            onClick={async () => {
+              setBusy(true)
+              await retrySession().finally(() => setBusy(false))
+            }}
+          >
+            Retry now
+          </Button>
+          <Link to="/login" className="btn btn--md">Sign in again</Link>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { status } = useAuth()
   const location = useLocation()
   if (status === 'loading') return <FullScreenLoading />
+  if (status === 'offline') return <Reconnecting />
   if (status === 'anonymous') return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />
   return <>{children}</>
 }

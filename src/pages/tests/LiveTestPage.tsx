@@ -59,8 +59,8 @@ export default function LiveTestPage() {
   const [error, setError] = useState('')
   const [fullscreen, setFullscreen] = useState(false)
   const dirty = useRef<Set<string>>(new Set())
+  // Source of truth for saving; kept in step with `answers` by update() and load.
   const answersRef = useRef(answers)
-  answersRef.current = answers
   const finishing = useRef(false)
 
   const goToResult = useCallback(() => {
@@ -97,6 +97,7 @@ export default function LiveTestPage() {
           map[first] = { selected: [], markedForReview: false, visited: true }
           dirty.current.add(first)
         }
+        answersRef.current = map
         setAnswers(map)
         setAttempt(a)
       } catch (err) {
@@ -111,9 +112,12 @@ export default function LiveTestPage() {
   /* ------------------------------ save ------------------------------ */
   const flush = useCallback(async (): Promise<boolean> => {
     if (!dirty.current.size) return true
-    const ids = Array.from(dirty.current)
+    const ids = Array.from(dirty.current).filter((id) => answersRef.current[id])
     dirty.current.clear()
-    const payload = ids.map((questionId) => ({ questionId, ...answersRef.current[questionId] }))
+    const payload = ids.map((questionId) => {
+      const a = answersRef.current[questionId]
+      return { questionId, selected: a.selected, markedForReview: a.markedForReview, visited: a.visited }
+    })
     setSaveState('saving')
     try {
       await api(`/api/attempts/${attemptId}/answers`, { method: 'PUT', body: { answers: payload } })
@@ -155,15 +159,18 @@ export default function LiveTestPage() {
     return () => window.removeEventListener('beforeunload', warn)
   }, [attempt])
 
+  /**
+   * Answer changes are applied to the ref synchronously (not inside a React
+   * state updater), so an immediate flush always sends the latest answers.
+   */
   const update = (qid: string, patch: Partial<AnswerState>) => {
-    setAnswers((prev) => {
-      const base: AnswerState = prev[qid] ?? { selected: [], markedForReview: false, visited: true }
-      const next = { ...prev, [qid]: { ...base, visited: true, ...patch } }
-      answersRef.current = next
-      sessionStorage.setItem(backupKey(attemptId), JSON.stringify({ answers: next, dirty: [...Array.from(dirty.current), qid] }))
-      return next
-    })
+    const prev = answersRef.current
+    const base: AnswerState = prev[qid] ?? { selected: [], markedForReview: false, visited: true }
+    const next = { ...prev, [qid]: { ...base, visited: true, ...patch } }
+    answersRef.current = next
     dirty.current.add(qid)
+    sessionStorage.setItem(backupKey(attemptId), JSON.stringify({ answers: next, dirty: Array.from(dirty.current) }))
+    setAnswers(next)
     setSaveState('saving')
   }
 

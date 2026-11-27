@@ -1434,10 +1434,20 @@
 .reminder-overlay {
   position: fixed;
   right: 18px;
-  top: calc(var(--header-h) + 14px);
-  z-index: 250;
+  /* Bottom-right, so it never covers the page's header actions. */
+  bottom: 18px;
+  /* Below dialogs (.modal-root is 200) so an open dialog is never covered. */
+  z-index: 150;
   width: min(370px, calc(100vw - 36px));
   animation: slideInRight 0.24s ease;
+}
+
+/* While a reminder is showing: keep notifications above it and leave room to scroll content clear of it. */
+.app:has(.reminder-overlay) .toast-stack {
+  bottom: 300px;
+}
+.app:has(.reminder-overlay) .page {
+  padding-bottom: 300px;
 }
 
 .reminder-card {

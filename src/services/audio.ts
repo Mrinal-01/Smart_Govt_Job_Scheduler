@@ -8,8 +8,8 @@ import type { SoundChoice } from '../types'
  * must stop immediately when the user completes the session").
  *
  * IMPORTANT LIMITATION (surfaced in the UI): this only runs while the tab is
- * alive. Background/closed-tab delivery needs Push + a service worker + a
- * server-side scheduler — see docs/API_CONTRACT.md → Notifications.
+ * alive. Background/closed-tab delivery would need Web Push + a service worker
+ * + a server-side scheduler (not implemented).
  */
 
 type Ctx = AudioContext | null
@@ -21,9 +21,21 @@ class ReminderAudio {
   private playing = false
   private sound: SoundChoice = 'chime'
   private volume = 0.55
+  /** A start() requested before the first user gesture; honoured by unlock(). */
+  private pendingStart: { sound: SoundChoice; volume: number } | null = null
+
+  /**
+   * Browsers block audio until the user interacts with the page. Creating or
+   * resuming an AudioContext earlier only produces console warnings, so wait.
+   */
+  private get gestureSeen(): boolean {
+    const ua = (navigator as Navigator & { userActivation?: { hasBeenActive: boolean } }).userActivation
+    return ua ? ua.hasBeenActive : true
+  }
 
   private ensureCtx(): AudioContext | null {
     if (typeof window === 'undefined') return null
+    if (!this.ctx && !this.gestureSeen) return null
     const AC = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
     if (!AC) return null
     if (!this.ctx) this.ctx = new AC()
@@ -40,6 +52,11 @@ class ReminderAudio {
       } catch {
         /* ignored */
       }
+    }
+    if (this.pendingStart) {
+      const { sound, volume } = this.pendingStart
+      this.pendingStart = null
+      this.start(sound, volume)
     }
   }
 
@@ -58,7 +75,10 @@ class ReminderAudio {
   start(sound: SoundChoice = this.sound, volume = this.volume): void {
     if (this.playing || sound === 'none') return
     const ctx = this.ensureCtx()
-    if (!ctx) return
+    if (!ctx) {
+      this.pendingStart = { sound, volume }
+      return
+    }
     this.playing = true
     this.sound = sound
     this.volume = volume
@@ -73,6 +93,7 @@ class ReminderAudio {
   }
 
   stop(): void {
+    this.pendingStart = null
     this.playing = false
     if (this.loopTimer !== null) {
       window.clearTimeout(this.loopTimer)

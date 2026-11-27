@@ -120,6 +120,9 @@ interface StudyContextValue {
   registerLearning: (topicId: ID, date: string, confidence?: number | null) => void
   recordCycleRevision: (topicId: ID, date: string, accuracy: number | null) => void
 
+  /* replace state with a newer copy saved by another tab (not re-saved) */
+  adoptExternalState: (next: StudyState) => void
+
   /* schedule governance */
   syncScheduleFromServer: (status: ServerScheduleStatus) => void
   discardScheduleDraft: () => void
@@ -292,14 +295,21 @@ export function StudyProvider({
   /* persistence */
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
-  const firstRender = useRef(true)
+  // Persist only states that differ from what was loaded or adopted.
+  const skipState = useRef<StudyState | null>(null)
+  const loadedState = useRef<StudyState>(state)
   useEffect(() => {
-    if (firstRender.current) {
-      firstRender.current = false
-      return
-    }
+    if (state === loadedState.current || state === skipState.current) return
     onChangeRef.current?.(state)
   }, [state])
+
+  const adoptExternalState = useCallback((next: StudyState) => {
+    const todayKey = dateKey()
+    const governed = applyGovernance(next, todayKey)
+    const adopted = { ...governed, sessions: createSessionsForDate(governed, todayKey) }
+    skipState.current = adopted
+    setState(adopted)
+  }, [])
 
   /* midnight rollover */
   useEffect(() => {
@@ -1062,6 +1072,7 @@ export function StudyProvider({
       clearAIMessages,
       registerLearning,
       recordCycleRevision,
+      adoptExternalState,
       syncScheduleFromServer,
       discardScheduleDraft,
       resetDemoData,
@@ -1115,6 +1126,7 @@ export function StudyProvider({
       clearAIMessages,
       registerLearning,
       recordCycleRevision,
+      adoptExternalState,
       syncScheduleFromServer,
       discardScheduleDraft,
       resetDemoData,
