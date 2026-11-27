@@ -1,12 +1,15 @@
 # Security
 
 ## Authentication
-* **Passwords:** Argon2id (`@node-rs/argon2`, m=19 MiB, t=2, p=1 — OWASP baseline). Never stored or logged in plain text. Policy: 10–128 chars, a letter and a number, not the email name, not on a small common-password list.
-* **Login hardening:** identical error for unknown email / wrong password, dummy hash on unknown email (timing), lockout for 15 minutes after 5 failures, per-IP rate limits.
-* **Email verification** required before password login (`REQUIRE_EMAIL_VERIFICATION`). Verification and reset tokens are 256-bit random, stored as SHA-256 hashes, single use, TTL-indexed (24 h / 1 h). Forgot-password and resend endpoints respond identically for unknown emails.
+* **Sign-up and login use a mobile number + one-time code (OTP)** — no passwords. Numbers are normalized to E.164 and restricted to `PHONE_ALLOWED_COUNTRY_CODES` (default India, 10 digits starting 6–9). One account per number (partial unique index; concurrent sign-ups collapse to one account).
+* **OTP storage & lifetime:** 6 digits from `crypto.randomInt`; only `HMAC-SHA256(OTP_SECRET, phone:purpose:code)` is stored (`phoneotps`); compared in constant time; valid 5 minutes; single use (atomic consume); one active code per number and purpose; 5 wrong attempts invalidate the code. Documents are TTL-purged.
+* **OTP abuse limits:** 60 s resend cooldown and at most 5 codes per number per rolling hour, plus 20 OTP requests/hour/IP and 10 register/login attempts per 15 min per IP. Codes are never logged in production; the console SMS driver refuses to send in production (503) so codes cannot leak to logs.
+* **Enumeration trade-off (product decision):** `otp/request` tells the user whether a number is registered (sign-up answers `PHONE_IN_USE`, login answers `PHONE_NOT_REGISTERED`) so they are sent to the right screen. The per-number and per-IP limits bound how fast numbers can be probed.
+* **Development codes:** with `NODE_ENV=development` and `SMS_DRIVER=console` only, the code is returned as `devOtp`, printed in the API log and listed at `GET /api/dev/sms`.
+* **Legacy accounts:** accounts created with email/password keep their Argon2id hash; they log in by OTP after a phone is attached (`npm --prefix server run user:set-phone`). Email verification and password reset were removed.
 * **Access token:** HS256 JWT, 15 minutes, issuer + audience checked, carries `tokenVersion`; held in memory only on the client (never `localStorage`).
 * **Refresh token:** 384-bit opaque value in an `HttpOnly`, `Secure` (production), `SameSite=strict` cookie scoped to `/api/auth`. Stored hashed. Rotated on every use; presenting an already-rotated token revokes the whole session family (theft detection), with a 15-second race window for parallel tabs.
-* **Revocation:** logout revokes the family; “sign out everywhere” and password change/reset revoke all refresh sessions **and** bump `tokenVersion`, which invalidates outstanding access tokens immediately (checked on every request).
+* **Revocation:** logout revokes the family; “sign out everywhere” and a (legacy) password change revoke all refresh sessions **and** bump `tokenVersion`, which invalidates outstanding access tokens immediately (checked on every request).
 * **CSRF:** only `/auth/refresh` and `/auth/logout` use the cookie; they require the `X-StudyOS-CSRF: 1` header (forces a CORS preflight) and an `Origin` that is allow-listed or the same host the request was sent to. All other endpoints use bearer tokens.
 
 ## Authorization & data isolation
@@ -33,7 +36,7 @@
 Helmet (CSP allowing only self + Google Fonts, HSTS, frame-ancestors self, no-sniff), CORS allow-list with credentials, `x-powered-by` off, generic 500 messages.
 
 ## Secrets & configuration
-`.env` files are git-ignored; `.env.example` files document every variable. In production the API refuses to start without 32+ character `JWT_ACCESS_SECRET` and `FILE_SIGNING_SECRET`.
+`.env` files are git-ignored; `.env.example` files document every variable. In production the API refuses to start without 32+ character `JWT_ACCESS_SECRET`, `FILE_SIGNING_SECRET` and `OTP_SECRET`.
 
 ## Dependency audit (2026-11-26)
 | Package | Status |
@@ -43,7 +46,7 @@ Helmet (CSP allowing only self + Google Fonts, HSTS, frame-ancestors self, no-sn
 | Web app | dev-only advisory in the esbuild dev server; `react-router` 6.x advisory fixed only in 7.x (planned migration) |
 
 ## Known gaps
-* No 2FA / passkeys; no email-change flow; no CAPTCHA (rate limits + lockout only).
-* The development mailbox endpoint exists only when `NODE_ENV=development`.
+* No passkeys; no phone-number change flow; no CAPTCHA (rate limits + per-number caps only). SMS OTP is vulnerable to SIM-swap like any SMS login.
+* The development mailbox and SMS inbox endpoints exist only when `NODE_ENV=development`.
 * Workspace documents are stored as JSON blobs (structure-validated, not field-by-field).
 * Background (closed-tab) reminders via Web Push are not implemented.

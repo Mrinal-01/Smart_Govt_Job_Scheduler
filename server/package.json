@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit -p .",
     "migrate:import-local": "tsx src/scripts/importLocalBackup.ts",
     "admin:promote": "tsx src/scripts/promoteAdmin.ts",
-    "seed:master": "tsx scripts/seed-master-account.mts"
+    "seed:master": "tsx scripts/seed-master-account.mts",
+    "user:set-phone": "tsx src/scripts/setUserPhone.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.14.0",

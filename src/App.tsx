@@ -4,6 +4,7 @@ import { AlertTriangle, ArrowRight, BellRing, Check, Clock, Volume2, VolumeX } f
 import { Header, Sidebar } from './components/AppShell'
 import { Badge, Button, ToastStack } from './components/ui'
 import { SessionWorkflowHost } from './components/sessions'
+import { PlanTodayProvider } from './components/PlanToday'
 import { useStudy } from './store/StudyStore'
 import { evaluateReminders } from './services/reminder'
 import { reminderAudio, sendBrowserNotification } from './services/audio'
@@ -13,20 +14,16 @@ import { chapterById, sessionViewsForDate, subjectById, topicById } from './stor
 
 import DashboardPage from './pages/DashboardPage'
 import SchedulePage from './pages/SchedulePage'
-import SessionsPage from './pages/SessionsPage'
 import SubjectsPage from './pages/SubjectsPage'
 import RevisionPage from './pages/RevisionPage'
-import MockTestsPage from './pages/MockTestsPage'
 import MistakeBankPage from './pages/MistakeBankPage'
 import AnalyticsPage from './pages/AnalyticsPage'
-import AssistantPage from './pages/AssistantPage'
 import SettingsPage from './pages/SettingsPage'
 import SundayPage from './pages/SundayPage'
 import NotFoundPage from './pages/NotFoundPage'
 import LoginPage from './pages/auth/LoginPage'
 import RegisterPage from './pages/auth/RegisterPage'
-import { ForgotPasswordPage, ResetPasswordPage, TermsPage, VerifyEmailPage } from './pages/auth/AccountRecoveryPages'
-import CyclesPage from './pages/CyclesPage'
+import { TermsPage } from './pages/auth/AccountRecoveryPages'
 import TestsHomePage from './pages/tests/TestsHomePage'
 import CreateTestPage from './pages/tests/CreateTestPage'
 import DocumentReviewPage from './pages/tests/DocumentReviewPage'
@@ -293,9 +290,10 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<PublicOnly><LoginPage /></PublicOnly>} />
       <Route path="/register" element={<PublicOnly><RegisterPage /></PublicOnly>} />
-      <Route path="/forgot-password" element={<PublicOnly><ForgotPasswordPage /></PublicOnly>} />
-      <Route path="/verify-email" element={<VerifyEmailPage />} />
-      <Route path="/reset-password" element={<ResetPasswordPage />} />
+      {/* Retired email flows (old links) go to the phone login. */}
+      <Route path="/forgot-password" element={<Navigate to="/login" replace />} />
+      <Route path="/verify-email" element={<Navigate to="/login" replace />} />
+      <Route path="/reset-password" element={<Navigate to="/login" replace />} />
       <Route path="/terms" element={<TermsPage />} />
       <Route
         path="/*"
@@ -344,6 +342,7 @@ function StudyApp() {
   }, [location.pathname])
 
   return (
+    <PlanTodayProvider>
     <div className={cx('app', state.settings.compactSidebar && 'is-compact')}>
       <Sidebar open={menuOpen} onClose={() => setMenuOpen(false)} />
       {menuOpen ? <div className="scrim" onClick={() => setMenuOpen(false)} /> : null}
@@ -352,19 +351,17 @@ function StudyApp() {
         <Routes>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/schedule" element={<SchedulePage />} />
-          <Route path="/sessions" element={<SessionsPage />} />
+          <Route path="/sessions" element={<Navigate to="/" replace />} />
           <Route path="/subjects" element={<SubjectsPage />} />
           <Route path="/subjects/:subjectId" element={<SubjectsPage />} />
           <Route path="/subjects/:subjectId/:chapterId" element={<SubjectsPage />} />
           <Route path="/revision" element={<RevisionPage />} />
-          <Route path="/mock-tests" element={<MockTestsPage />} />
-          <Route path="/mock-tests/:mockId" element={<MockTestsPage />} />
+          <Route path="/mock-tests/*" element={<Navigate to="/tests" replace />} />
           <Route path="/mistakes" element={<MistakeBankPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
-          <Route path="/assistant" element={<AssistantPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/sunday" element={<SundayPage />} />
-          <Route path="/cycles" element={<CyclesPage />} />
+          <Route path="/cycles" element={<Navigate to="/schedule" replace />} />
           <Route path="/tests" element={<TestsHomePage />} />
           <Route path="/tests/new" element={<CreateTestPage />} />
           <Route path="/tests/bank" element={<QuestionBankPage />} />
@@ -377,6 +374,7 @@ function StudyApp() {
       <ReminderRuntime />
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
+    </PlanTodayProvider>
   )
 }
 

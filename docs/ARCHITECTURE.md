@@ -5,13 +5,13 @@
 │ AuthProvider ── access token in memory; refresh via HttpOnly cookie               │
 │   └ WorkspaceGate ── loads /api/workspace, onboarding/migration, debounced sync   │
 │        └ StudyProvider (existing store) ── legacy pages unchanged                 │
-│        └ New pages: Study Cycles · PDF Test Builder · Exam · Results · Settings   │
+│        └ Pages: Dashboard · Schedule · Revision · Subjects · Tests · Analytics    │
 └───────────────────────────────────────┬────────────────────────────────────────────┘
                                         │ /api (same origin; Vite proxy in dev)
 ┌───────────────────────────── API (Express + TypeScript) ──────────────────────────┐
 │ helmet · CORS allow-list · rate limits · $-key guard · Zod validation · pino       │
 │ modules/                                                                            │
-│   auth  workspace  settings  schedule  cycles  documents  questions  exams  ai     │
+│   auth  workspace  settings  schedule  plan  sounds  documents  questions  exams ai │
 │ jobs/queue.ts (Mongo-backed worker)   integrations/ (mail, storage, ai)            │
 └──────────────┬──────────────────────────────┬──────────────────────┬───────────────┘
                │                              │                      │
@@ -50,25 +50,27 @@ The curriculum (subjects → chapters → topics) lives in the workspace. Server
 it by id and validate against it (`curriculum.service.ts`), so a client cannot attach work to
 topics it does not have. The client flushes pending workspace edits before cycle/test actions.
 
-## Study cycle engine (`modules/cycles`)
+## Study plan engine (`modules/plan`) — scheduled sessions & revision gates
 
-* A **day** has many **cycles**; a cycle has one **subject block** per cycle subject.
-* Block states: `pending → revision → ready → learning → completed | skipped | incomplete`.
-* Completing learning writes `StudyLog`s (`completed` or `partial`).
-* Starting a cycle generates a `RevisionTask` (kind `cycle`) for each topic **fully completed
-  today** that does not have one (`dedupeKey = cycle:<date>:<topicId>`, unique index), assigns up to
-  `maxTopicsPerRevisionBlock` per subject to that subject's block, defers the rest.
-* `start-learning` is refused (`409 REVISION_REQUIRED`) while assigned tasks are unresolved and
-  revision is mandatory. A task resolves only by an explicit `complete` (with recall outcome /
-  question counts) or `skip` (with reason). Opening or starting revision never completes it.
-* Revision time is measured on the server (`completedAt − startedAt`).
-* Ending a cycle, skipping a subject or optional-revision learning returns unresolved tasks to the
-  **carry-forward** queue; partial topics and missed/incomplete subjects are listed there too.
-* Only one active cycle per user (partial unique index). A cycle left active past midnight is
-  closed as incomplete.
-* **Spaced revision** (next-day / weekly / monthly) stays in the existing workspace engine.
-  The cycle page calls `registerLearning` / `recordCycleRevision` so the Revision Center sees
-  cycle work; a same-day cycle revision is recorded but does not advance spaced intervals.
+Full contract: [STUDY_CYCLE_AND_REVISION_API.md](STUDY_CYCLE_AND_REVISION_API.md).
+
+* Sessions of the **published** schedule are materialized per date (`studysessions`, unique
+  `userId+date+slotId`) from the version governing that date; the slot snapshot is frozen, so later
+  versions never rewrite past or current-day sessions. Stored status is
+  `scheduled|in_progress|completed|skipped|missed`; lock states are derived on every read.
+* Completing learning with fully completed topics creates a **same-day** obligation that locks the
+  next learning session of *that subject*. Each ended study day produces **next-day carryover**
+  obligations (one per subject) that lock all learning of the next study day. **Weekly** obligations
+  (per subject, due on the review day) never gate learning. Each type is completed separately.
+* `POST /plan/sessions/:id/start` re-evaluates the gate on the server; the web client only starts its
+  local timer after the server accepted the start, so a direct API call cannot bypass it.
+* Emergency overrides are immutable `gateoverrides` records; bypassed obligations stay pending.
+* Day boundaries use the student's `UserSettings.timezone` and study calendar (rest weekdays,
+  holidays). `lib/clock.ts` is the single time source (replaceable when testing day boundaries).
+* No transactions (standalone MongoDB): single-document conditional updates + unique-index
+  idempotency; see the consistency table in the API doc.
+* The legacy workspace session records are still updated as a mirror for the existing dashboard,
+  reminders and spaced-revision views; they no longer decide anything.
 
 ## Schedule governance (`modules/schedule`)
 
@@ -78,6 +80,9 @@ topics it does not have. The client flushes pending workspace edits before cycle
 * Later publishes count against `SCHEDULE_MAX_CHANGES` per rolling `SCHEDULE_WINDOW_DAYS`, are
   effective **tomorrow at the earliest**, need a reason, and when the budget is spent require an
   emergency override with a ≥10-character reason (recorded + notification).
+* Every preview/publish validates slot dependencies (chapter/topic ownership, prerequisites on the
+  same day and earlier, cycle order per subject); errors block publishing
+  (`422 INVALID_SCHEDULE_DEPENDENCIES`). Pending revision obligations always carry over.
 * For a date, the governing version is the highest version whose `effectiveFrom ≤ date`. The client
   switches its active timetable when that version changes; past session records are untouched.
 

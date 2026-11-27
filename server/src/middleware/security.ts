@@ -58,6 +58,8 @@ const limiterOptions = {
 
 /** Credential endpoints: 10 attempts / 15 min / IP. */
 export const authLimiter = rateLimit({ ...limiterOptions, windowMs: 15 * 60_000, limit: scale(10) })
+/** OTP SMS requests: 20 / hour / IP (each number is further capped to 5 codes / hour). */
+export const otpLimiter = rateLimit({ ...limiterOptions, windowMs: 60 * 60_000, limit: scale(20) })
 /** Email-sending endpoints: 5 / hour / IP. */
 export const emailLimiter = rateLimit({ ...limiterOptions, windowMs: 60 * 60_000, limit: scale(5) })
 /**

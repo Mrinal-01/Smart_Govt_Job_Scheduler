@@ -39,6 +39,9 @@ interface Status extends ServerScheduleStatus {
 interface Preview {
   isBaseline: boolean
   diff: { added: string[]; removed: string[]; modified: Array<{ slotId: string; fields: string[] }>; summary: string[] }
+  /** Server dependency validation: errors block publishing, warnings are advisory. */
+  validation: { errors: Array<{ slotId: string; message: string }>; warnings: Array<{ slotId: string; message: string }> }
+  carryOver: { pendingObligations: number; bySubject: Array<{ subjectName: string; count: number }> }
   usage: Usage
 }
 
@@ -197,6 +200,7 @@ function PublishModal({
   }, [draft])
 
   const limitReached = preview ? !preview.isBaseline && preview.usage.remaining === 0 : false
+  const blocking = preview?.validation?.errors ?? []
   const changedDays = useMemo(
     () => DAY_ORDER.filter((d) => JSON.stringify(current.filter((s) => s.weekday === d)) !== JSON.stringify(draft.filter((s) => s.weekday === d))),
     [current, draft]
@@ -237,7 +241,7 @@ function PublishModal({
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
-          <Button variant={limitReached ? 'danger' : 'primary'} loading={busy} disabled={!preview || (limitReached && !override)} onClick={publish}>
+          <Button variant={limitReached ? 'danger' : 'primary'} loading={busy} disabled={!preview || blocking.length > 0 || (limitReached && !override)} onClick={publish}>
             {limitReached ? 'Publish with emergency override' : 'Confirm & publish'}
           </Button>
         </>
@@ -252,6 +256,38 @@ function PublishModal({
               {preview.isBaseline ? 'First publish — free' : `${preview.usage.remaining} change(s) remaining · this publish uses 1`}
             </Badge>
           </div>
+          {blocking.length ? (
+            <div className="callout callout--danger">
+              <AlertTriangle size={14} />
+              <div>
+                <strong>Fix these dependency problems before publishing</strong>
+                <ul className="diff-list">
+                  {blocking.map((e) => (
+                    <li key={`${e.slotId}-${e.message}`}>{e.message}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          ) : null}
+          {preview.validation?.warnings.length ? (
+            <div className="callout callout--warning">
+              <AlertTriangle size={14} />
+              <ul className="diff-list">
+                {preview.validation.warnings.map((w) => (
+                  <li key={`${w.slotId}-${w.message}`}>{w.message}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {preview.carryOver?.pendingObligations ? (
+            <div className="callout callout--info">
+              <AlertTriangle size={14} />
+              <span>
+                {preview.carryOver.pendingObligations} pending revision obligation(s) (
+                {preview.carryOver.bySubject.map((b) => `${b.subjectName} ${b.count}`).join(', ')}) carry over unchanged — publishing never completes or removes them.
+              </span>
+            </div>
+          ) : null}
           <div className="muted-box">
             <strong>Changes</strong>
             {preview.diff.summary.length ? (

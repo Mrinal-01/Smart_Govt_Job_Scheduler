@@ -4,23 +4,39 @@ import { api, configureSession, lastRefreshFailure, refreshSession, setAccessTok
 export interface AuthUser {
   id: string
   name: string
-  email: string
+  /** E.164, e.g. +919876543210. Null only for legacy email accounts without a phone. */
+  phone: string | null
+  phoneVerified: boolean
+  email: string | null
   emailVerified: boolean
+  /** Legacy email accounts may still have a password; phone accounts never do. */
+  hasPassword: boolean
   role: string
   createdAt: string
+}
+
+export type OtpPurpose = 'signup' | 'login'
+export interface OtpRequestResult {
+  phone: string
+  expiresIn: number
+  resendIn: number
+  /** Development only (console SMS driver): the code, so it can be entered without an SMS. */
+  devOtp?: string
 }
 
 export interface PublicConfig {
   ai: { configured: boolean; provider: string | null; model: string | null }
   ocr: { provider: string; available: boolean }
   mail: { driver: string; delivers: boolean }
-  requireEmailVerification: boolean
+  sms: { driver: string; delivers: boolean }
+  phoneCountryCodes: string[]
   maxUploadMb: number
   maxPdfPages: number
   schedulePolicy: { maxChanges: number; windowDays: number }
   timezone: string
   environment: string
   devMailbox: boolean
+  devSms: boolean
 }
 
 /** `offline`: this browser has a session but the server could not be reached to restore it (auto-retries). */
@@ -31,8 +47,9 @@ interface AuthValue {
   user: AuthUser | null
   config: PublicConfig | null
   configError: string | null
-  login: (email: string, password: string) => Promise<void>
-  register: (input: { name: string; email: string; password: string; confirmPassword: string; acceptTerms: boolean }) => Promise<{ verificationRequired: boolean }>
+  requestOtp: (phone: string, purpose: OtpPurpose) => Promise<OtpRequestResult>
+  login: (phone: string, otp: string) => Promise<void>
+  register: (input: { name: string; phone: string; otp: string; acceptTerms: boolean }) => Promise<void>
   logout: () => Promise<void>
   logoutAll: () => Promise<void>
   refreshUser: () => Promise<void>
@@ -146,16 +163,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => window.clearInterval(id)
   }, [status])
 
+  const requestOtp = useCallback(
+    (phone: string, purpose: OtpPurpose) => api<OtpRequestResult>('/api/auth/otp/request', { method: 'POST', body: { phone, purpose }, auth: false }),
+    []
+  )
+
   const login = useCallback(
-    async (email: string, password: string) => {
-      acceptSession(await api<TokenPayload>('/api/auth/login', { method: 'POST', body: { email, password }, auth: false }))
+    async (phone: string, otp: string) => {
+      acceptSession(await api<TokenPayload>('/api/auth/login', { method: 'POST', body: { phone, otp }, auth: false }))
     },
     [acceptSession]
   )
 
-  const register = useCallback(async (input: { name: string; email: string; password: string; confirmPassword: string; acceptTerms: boolean }) => {
-    return api<{ verificationRequired: boolean }>('/api/auth/register', { method: 'POST', body: input, auth: false })
-  }, [])
+  /** Creating the account also signs in (the server issues the same session as a login). */
+  const register = useCallback(
+    async (input: { name: string; phone: string; otp: string; acceptTerms: boolean }) => {
+      acceptSession(await api<TokenPayload>('/api/auth/register', { method: 'POST', body: input, auth: false }))
+    },
+    [acceptSession]
+  )
 
   const logout = useCallback(async () => {
     await api('/api/auth/logout', { method: 'POST', csrf: true, auth: false }).catch(() => undefined)
@@ -175,8 +201,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const value = useMemo<AuthValue>(
-    () => ({ status, user, config, configError, login, register, logout, logoutAll, refreshUser, retrySession: restore, setUser: setUserState }),
-    [status, user, config, configError, login, register, logout, logoutAll, refreshUser, restore]
+    () => ({ status, user, config, configError, requestOtp, login, register, logout, logoutAll, refreshUser, retrySession: restore, setUser: setUserState }),
+    [status, user, config, configError, requestOtp, login, register, logout, logoutAll, refreshUser, restore]
   )
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

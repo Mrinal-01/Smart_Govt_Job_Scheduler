@@ -1,4 +1,5 @@
 import type { SoundChoice } from '../types'
+import { apiBlob } from '../lib/http'
 
 /**
  * Web Audio reminder engine.
@@ -14,8 +15,14 @@ import type { SoundChoice } from '../types'
 
 type Ctx = AudioContext | null
 
+const isCustom = (s: SoundChoice): s is `custom:${string}` => s.startsWith('custom:')
+const PATTERN_MS: Record<string, number> = { pulse: 4200, gong: 4500, alarm: 2400 }
+
 class ReminderAudio {
   private ctx: Ctx = null
+  /** Element playing a student-uploaded sound (custom:<id>). */
+  private audioEl: HTMLAudioElement | null = null
+  private blobUrls = new Map<string, string>()
   private loopTimer: number | null = null
   private activeNodes: Array<{ osc: OscillatorNode; gain: GainNode }> = []
   private playing = false
@@ -67,13 +74,66 @@ class ReminderAudio {
 
   /** One-shot preview used by Settings. */
   playOnce(sound: SoundChoice = this.sound, volume = this.volume): void {
+    if (sound === 'none') return
+    if (isCustom(sound)) {
+      if (this.gestureSeen) void this.playCustom(sound.slice(7), volume, false)
+      return
+    }
     const ctx = this.ensureCtx()
-    if (!ctx || sound === 'none') return
+    if (!ctx) return
     this.schedulePattern(ctx, sound, volume, 0)
+  }
+
+  /** Downloads (once) an uploaded sound and keeps it as an in-memory URL. */
+  private async loadCustom(id: string): Promise<string> {
+    const cached = this.blobUrls.get(id)
+    if (cached) return cached
+    const url = URL.createObjectURL(await apiBlob(`/api/sounds/${id}/file`))
+    this.blobUrls.set(id, url)
+    return url
+  }
+
+  /** Call after deleting an uploaded sound. */
+  forgetCustom(id: string) {
+    const url = this.blobUrls.get(id)
+    if (url) URL.revokeObjectURL(url)
+    this.blobUrls.delete(id)
+  }
+
+  private async playCustom(id: string, volume: number, loop: boolean) {
+    try {
+      const url = await this.loadCustom(id)
+      if (loop && !this.playing) return // stopped while downloading
+      this.audioEl?.pause()
+      const el = new Audio(url)
+      el.loop = loop
+      el.volume = Math.max(0, Math.min(1, volume))
+      this.audioEl = el
+      await el.play()
+    } catch {
+      // Missing/deleted/unplayable file: never stay silent — fall back to the default chime.
+      if (loop && this.playing) {
+        this.playing = false
+        this.start('chime', volume)
+      } else if (!loop) {
+        this.playOnce('chime', volume)
+      }
+    }
   }
 
   start(sound: SoundChoice = this.sound, volume = this.volume): void {
     if (this.playing || sound === 'none') return
+    if (isCustom(sound)) {
+      if (!this.gestureSeen) {
+        this.pendingStart = { sound, volume }
+        return
+      }
+      this.playing = true
+      this.sound = sound
+      this.volume = volume
+      void this.playCustom(sound.slice(7), volume, true)
+      return
+    }
     const ctx = this.ensureCtx()
     if (!ctx) {
       this.pendingStart = { sound, volume }
@@ -86,7 +146,7 @@ class ReminderAudio {
     const cycle = () => {
       if (!this.playing) return
       this.schedulePattern(ctx, sound, volume, 0)
-      const patternLength = sound === 'pulse' ? 4200 : 2600
+      const patternLength = PATTERN_MS[sound] ?? 2600
       this.loopTimer = window.setTimeout(cycle, patternLength)
     }
     cycle()
@@ -95,6 +155,10 @@ class ReminderAudio {
   stop(): void {
     this.pendingStart = null
     this.playing = false
+    if (this.audioEl) {
+      this.audioEl.pause()
+      this.audioEl = null
+    }
     if (this.loopTimer !== null) {
       window.clearTimeout(this.loopTimer)
       this.loopTimer = null
@@ -148,6 +212,26 @@ class ReminderAudio {
         blip(1046.5, i * 0.55, 0.6, 'triangle', 0.5)
         blip(1568, i * 0.55 + 0.01, 0.45, 'sine', 0.25)
       }
+    } else if (sound === 'digital') {
+      // two bursts of short square beeps, like a digital watch
+      for (let burst = 0; burst < 2; burst += 1) {
+        for (let i = 0; i < 4; i += 1) blip(1500, burst * 0.9 + i * 0.12, 0.08, 'square', 0.25)
+      }
+    } else if (sound === 'marimba') {
+      // rising C-major arpeggio with a soft wooden decay
+      ;[523.3, 659.3, 784, 1046.5].forEach((f, i) => blip(f, i * 0.15, 0.35, 'sine', 0.55))
+    } else if (sound === 'gong') {
+      // one deep, long resonance
+      blip(196, 0, 2.4, 'sine', 0.6)
+      blip(293.7, 0.02, 1.4, 'triangle', 0.25)
+      blip(392, 0.04, 0.8, 'sine', 0.15)
+    } else if (sound === 'alarm') {
+      // urgent two-tone alternation
+      for (let i = 0; i < 6; i += 1) blip(i % 2 ? 660 : 880, i * 0.22, 0.2, 'square', 0.3)
+    } else if (sound === 'ping') {
+      // gentle double ping
+      blip(1760, 0, 0.25, 'sine', 0.35)
+      blip(2349.3, 0.12, 0.3, 'sine', 0.25)
     } else {
       // 'pulse' — two low urgency thumps repeated
       for (let i = 0; i < 3; i += 1) {

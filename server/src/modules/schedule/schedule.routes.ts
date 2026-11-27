@@ -5,6 +5,7 @@ import { asyncHandler } from '../../lib/errors.js'
 import { parse } from '../../lib/validate.js'
 import { authOf, requireAuth } from '../../middleware/auth.js'
 import * as svc from './schedule.service.js'
+import { normalizeSlot } from './slots.js'
 
 export const scheduleRouter = Router()
 scheduleRouter.use(requireAuth)
@@ -27,11 +28,18 @@ export const slotSchema = z
     practiceTarget: z.number().int().min(0).max(1000).default(0),
     reminderEnabled: z.boolean().default(true),
     breakAfterMinutes: z.number().int().min(0).max(240).default(0),
-    order: z.number().int().min(0).max(500).default(0)
+    order: z.number().int().min(0).max(500).default(0),
+    sessionType: z.enum(['learning', 'revision', 'practice', 'mock_test']).default('learning'),
+    cycleNumber: z.number().int().min(1).max(20).nullable().default(null),
+    chapterId: z.string().min(1).max(160).nullable().default(null),
+    topicIds: z.array(z.string().min(1).max(240)).max(20).default([]),
+    revisionMinutes: z.number().int().min(1).max(180).nullable().default(null),
+    revisionPolicy: z.enum(['previous_cycle', 'all_previous_cycles', 'none']).optional(),
+    prerequisiteSlotIds: z.array(z.string().min(1).max(80)).max(10).default([])
   })
   .refine((s) => toMin(s.endTime) > toMin(s.startTime), { message: 'End time must be after start time', path: ['endTime'] })
-  // Duration is always derived from the times on the server.
-  .transform((s) => ({ ...s, durationMinutes: toMin(s.endTime) - toMin(s.startTime) }))
+  // Duration is always derived from the times on the server; policy/flag are kept consistent.
+  .transform((s) => normalizeSlot({ ...s, durationMinutes: toMin(s.endTime) - toMin(s.startTime) }))
 
 const slotsSchema = z.array(slotSchema).max(300)
 

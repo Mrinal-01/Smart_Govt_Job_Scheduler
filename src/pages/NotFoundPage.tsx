@@ -20,7 +20,7 @@ export default function NotFoundPage() {
             <Button variant="primary" icon={<Home size={14} />} onClick={() => navigate('/')}>
               Back to dashboard
             </Button>
-            <Button variant="secondary" onClick={() => navigate('/sessions')}>
+            <Button variant="secondary" onClick={() => navigate('/schedule')}>
               Study sessions
             </Button>
           </div>

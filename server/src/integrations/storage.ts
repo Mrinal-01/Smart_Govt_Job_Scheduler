@@ -18,7 +18,8 @@ export interface ObjectStorage {
   remove(key: string): Promise<void>
 }
 
-const SAFE_KEY = /^[a-f0-9]{24}\/[a-f0-9]{24}\.pdf$/
+/** `<userId>/<docId>.pdf` for documents, `<userId>/sounds/<soundId>.<ext>` for alert sounds. */
+const SAFE_KEY = /^[a-f0-9]{24}\/(?:[a-f0-9]{24}\.pdf|sounds\/[a-f0-9]{24}\.(?:mp3|wav|ogg|m4a|webm))$/
 
 function resolveKey(key: string) {
   if (!SAFE_KEY.test(key)) throw new Error('Invalid storage key')
@@ -44,6 +45,7 @@ export const localStorage: ObjectStorage = {
 export const storage: ObjectStorage = localStorage
 
 export const storageKeyFor = (userId: string, documentId: string) => `${userId}/${documentId}.pdf`
+export const soundKeyFor = (userId: string, soundId: string, ext: string) => `${userId}/sounds/${soundId}.${ext}`
 
 /* ------------------------------------------------------------------ */
 /* Signed URLs — short-lived, bound to the document and its owner      */

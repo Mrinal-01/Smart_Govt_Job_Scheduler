@@ -46,7 +46,7 @@ export default function OnboardingPage({ onCreated }: { onCreated: () => void })
       else if (choice === 'demo') [data, origin] = [buildSeedState(), 'demo']
       else [data, origin] = [buildFreshState(), 'fresh']
       // The account is the identity: profile name/email come from it.
-      data = { ...data, sessions: data.sessions ?? {}, profile: { ...data.profile, name: user?.name ?? data.profile.name, email: user?.email ?? data.profile.email } }
+      data = { ...data, sessions: data.sessions ?? {}, profile: { ...data.profile, name: user?.name ?? data.profile.name, email: user?.email ?? data.profile.email ?? '' } }
       await api('/api/workspace', { method: 'POST', body: { origin, data } })
       onCreated()
     } catch (err) {

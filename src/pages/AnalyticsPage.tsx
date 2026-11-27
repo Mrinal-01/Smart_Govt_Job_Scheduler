@@ -33,6 +33,7 @@ import {
 } from '../store/selectors'
 import { addDays, dateKey, formatDuration, formatShortDate, MONTH_SHORT, parseDateKey, weekdayOf } from '../lib/date'
 import { cx, pct, sum } from '../lib/utils'
+import { planApi, usePlanResource } from '../lib/plan'
 
 type RangeKey = '7' | '30' | '90' | '365'
 
@@ -313,7 +314,7 @@ export default function AnalyticsPage() {
                 </defs>
                 <CartesianGrid strokeDasharray="3 4" stroke="var(--border-subtle)" vertical={false} />
                 <XAxis dataKey="label" tickLine={false} axisLine={false} interval={Math.max(0, Math.floor(dailySeries.length / 8))} />
-                <YAxis tickLine={false} axisLine={false} width={44} unit="h" />
+                <YAxis tickLine={false} axisLine={false} width={56} unit="h" />
                 <Tooltip content={<TooltipBox />} />
                 <Area type="monotone" dataKey="planned" name="Planned" stroke="#94a3b8" strokeDasharray="4 3" fill="transparent" strokeWidth={1.4} />
                 <Area type="monotone" dataKey="actual" name="Actual" stroke="#4f46e5" fill="url(#actualFill)" strokeWidth={2} />
@@ -329,7 +330,7 @@ export default function AnalyticsPage() {
               <LineChart data={dailySeries} margin={{ top: 4, right: 6, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 4" stroke="var(--border-subtle)" vertical={false} />
                 <XAxis dataKey="label" tickLine={false} axisLine={false} interval={Math.max(0, Math.floor(dailySeries.length / 6))} />
-                <YAxis domain={[0, 100]} tickLine={false} axisLine={false} width={40} unit="%" />
+                <YAxis domain={[0, 100]} tickLine={false} axisLine={false} width={56} unit="%" />
                 <Tooltip content={<TooltipBox />} />
                 <Line type="monotone" dataKey="accuracy" name="Accuracy" stroke="#0e9f6e" strokeWidth={2} dot={false} connectNulls />
               </LineChart>
@@ -347,7 +348,7 @@ export default function AnalyticsPage() {
               <BarChart data={subjectSeries} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 4" stroke="var(--border-subtle)" vertical={false} />
                 <XAxis dataKey="name" tickLine={false} axisLine={false} />
-                <YAxis tickLine={false} axisLine={false} width={40} unit="h" />
+                <YAxis tickLine={false} axisLine={false} width={56} unit="h" />
                 <Tooltip content={<TooltipBox />} />
                 <Bar dataKey="hours" name="Hours" radius={[6, 6, 0, 0]} maxBarSize={46}>
                   {subjectSeries.map((s) => (
@@ -385,7 +386,7 @@ export default function AnalyticsPage() {
               <BarChart data={monthSeries} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 4" stroke="var(--border-subtle)" vertical={false} />
                 <XAxis dataKey="label" tickLine={false} axisLine={false} />
-                <YAxis tickLine={false} axisLine={false} width={40} />
+                <YAxis tickLine={false} axisLine={false} width={56} />
                 <Tooltip content={<TooltipBox />} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
                 <Bar dataKey="hours" name="Hours" fill="#4f46e5" radius={[5, 5, 0, 0]} maxBarSize={26} />
@@ -402,7 +403,7 @@ export default function AnalyticsPage() {
               <BarChart data={weeklyBuckets} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 4" stroke="var(--border-subtle)" vertical={false} />
                 <XAxis dataKey="label" tickLine={false} axisLine={false} interval={Math.max(0, Math.floor(weeklyBuckets.length / 6))} />
-                <YAxis tickLine={false} axisLine={false} width={40} unit="h" />
+                <YAxis tickLine={false} axisLine={false} width={56} unit="h" />
                 <Tooltip content={<TooltipBox />} />
                 <Bar dataKey="minutes" name="Minutes" fill="#0369a1" radius={[5, 5, 0, 0]} maxBarSize={26} />
               </BarChart>
@@ -465,14 +466,180 @@ export default function AnalyticsPage() {
         </Card>
       </div>
 
-      <div className="callout callout--neutral" style={{ marginTop: 16 }}>
-        <Activity size={13} />
-        <span style={{ fontSize: 11.5 }}>
-          Historical data is preserved even when the schedule changes — logs are keyed by date, not by the current timetable. Seeded demo history is
-          generated deterministically so charts stay stable across refreshes.
-        </span>
-      </div>
+      {/* Uses the page's range picker; the server keeps at most 180 days of plan analytics. */}
+      <PlanAnalyticsSection days={Math.min(180, Number(range))} />
     </main>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Learning vs revision (server study-plan analytics)                  */
+/* ------------------------------------------------------------------ */
+
+const rate = (v: number | null) => (v === null ? '—' : `${v}%`)
+
+function PlanAnalyticsSection({ days }: { days: number }) {
+  const { data, error, loading } = usePlanResource(() => planApi.analytics(days), [days], 0)
+  const hasData =
+    data && (data.sessions.planned > 0 || data.revisions.same_day.total + data.revisions.next_day.total + data.revisions.weekly.total > 0 || data.overrides.gate > 0)
+  const series = (data?.daily ?? []).map((d) => ({ label: formatShortDate(d.date), learning: d.learningMinutes, revision: d.revisionMinutes }))
+  return (
+    <Card className="section">
+      <CardHeader
+        title="Learning vs revision"
+        subtitle="Time spent learning new topics and time spent revising, counted separately."
+        icon={<RotateCcw size={15} />}
+      />
+      {error ? <div className="callout callout--danger">{error}</div> : null}
+      {loading && !data ? <p className="text-tertiary">Loading…</p> : null}
+      {data && !hasData ? (
+        <p className="text-tertiary" style={{ fontSize: 12.5 }}>
+          No scheduled-session data in this range yet. Start and complete sessions from your published schedule to see learning and revision analytics.
+        </p>
+      ) : null}
+      {data && hasData ? (
+        <div className="stack" style={{ gap: 14 }}>
+          <div className="plan-stats">
+            <div>
+              <span className="stat__label">Learning time</span>
+              <strong className="mono">{formatDuration(data.time.actualLearningMinutes)}</strong>
+              <span className="stat__hint">of {formatDuration(data.time.plannedLearningMinutes)} planned</span>
+            </div>
+            <div>
+              <span className="stat__label">Revision time</span>
+              <strong className="mono">{formatDuration(data.time.actualRevisionMinutes)}</strong>
+              <span className="stat__hint">of {formatDuration(data.time.plannedRevisionMinutes)} planned</span>
+            </div>
+            {(['same_day', 'next_day', 'weekly'] as const).map((k) => {
+              const b = data.revisions[k]
+              return (
+                <div key={k}>
+                  <span className="stat__label">{k === 'same_day' ? 'Same-day' : k === 'next_day' ? 'Next-day' : 'Weekly'} revision</span>
+                  <strong className="mono">{rate(b.completionRate)}</strong>
+                  <span className="stat__hint">
+                    {b.completed}/{b.total} done · {b.open} open{b.bypassed ? ` (${b.bypassed} bypassed)` : ''}
+                  </span>
+                </div>
+              )
+            })}
+            <div>
+              <span className="stat__label">Overdue revisions</span>
+              <strong className={cx('mono', data.overdueRevisions > 0 && 'text-danger')}>{data.overdueRevisions}</strong>
+            </div>
+            <div>
+              <span className="stat__label">Sessions</span>
+              <strong className="mono">{rate(data.sessions.completionRate)}</strong>
+              <span className="stat__hint">
+                {data.sessions.completed}/{data.sessions.planned} · {data.sessions.skipped} skipped · {data.sessions.missed} missed
+              </span>
+            </div>
+            <div>
+              <span className="stat__label">Emergency overrides</span>
+              <strong className={cx('mono', data.overrides.gate + data.overrides.schedule > 0 && 'text-danger')}>{data.overrides.gate + data.overrides.schedule}</strong>
+              <span className="stat__hint">
+                {data.overrides.gate} revision gate · {data.overrides.schedule} schedule
+              </span>
+            </div>
+            <div>
+              <span className="stat__label">Accuracy</span>
+              <strong className="mono">
+                {rate(data.performance.learningAccuracy)} / {rate(data.performance.revisionAccuracy)}
+              </strong>
+              <span className="stat__hint">
+                learning ({data.performance.learningQuestions} Q) / revision ({data.performance.revisionQuestions} Q)
+                {data.performance.averageRevisionConfidence !== null ? ` · confidence ${data.performance.averageRevisionConfidence}/5` : ''}
+              </span>
+            </div>
+          </div>
+
+          <div className="chart-box" style={{ height: 210 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={series} margin={{ top: 4, right: 6, left: -18, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 4" stroke="var(--border-subtle)" vertical={false} />
+                <XAxis dataKey="label" tickLine={false} axisLine={false} interval={Math.max(0, Math.floor(series.length / 8))} />
+                <YAxis tickLine={false} axisLine={false} width={56} unit="m" />
+                <Tooltip content={<TooltipBox />} />
+                <Legend />
+                <Bar dataKey="learning" name="Learning (min)" fill="#4f46e5" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="revision" name="Revision (min)" fill="#0e9f6e" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="grid grid--2" style={{ gap: 14, alignItems: 'start' }}>
+            <div>
+              <p className="queue-label">Subject-wise completion</p>
+              <table className="plan-table">
+                <thead>
+                  <tr>
+                    <th>Subject</th>
+                    <th>Sessions</th>
+                    <th>Learning</th>
+                    <th>Revision</th>
+                    <th>Revisions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.subjects.map((s) => (
+                    <tr key={s.subjectId}>
+                      <td>{s.subjectName}</td>
+                      <td className="mono">
+                        {s.completedSessions}/{s.plannedSessions} ({rate(s.completionRate)})
+                      </td>
+                      <td className="mono">{formatDuration(s.learningMinutes)}</td>
+                      <td className="mono">{formatDuration(s.revisionMinutes)}</td>
+                      <td className="mono">
+                        {s.revisionsCompleted}/{s.revisionsDue}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div>
+              <p className="queue-label">Chapter-wise progress</p>
+              {data.chapters.length ? (
+                <div className="stack" style={{ gap: 8 }}>
+                  {data.chapters.map((c) => (
+                    <div key={c.chapterId}>
+                      <div className="row row--between" style={{ fontSize: 12 }}>
+                        <span className="truncate">
+                          {c.chapterName} <span className="text-tertiary">· {c.subjectName}</span>
+                        </span>
+                        <span className="mono text-secondary">
+                          {c.topicsLearned} learned · {c.topicsRevised} revised / {c.topicsTotal}
+                        </span>
+                      </div>
+                      <Progress value={c.topicsLearned} max={Math.max(1, c.topicsTotal)} height={4} />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-tertiary" style={{ fontSize: 12 }}>
+                  No chapter progress yet.
+                </p>
+              )}
+            </div>
+          </div>
+
+          {data.overrides.recent.length ? (
+            <div>
+              <p className="queue-label">Recent emergency overrides (revision gate)</p>
+              <ul className="practice-list">
+                {data.overrides.recent.map((o) => (
+                  <li key={o.id}>
+                    <strong>{o.date}</strong> {o.subjectName} — {o.reason}{' '}
+                    <span className="text-tertiary">
+                      · was {o.originalState.replace(/_/g, ' ')} · {o.obligations} revision(s) bypassed, still pending until completed
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </Card>
   )
 }
 

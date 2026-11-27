@@ -1,16 +1,14 @@
 import { Router } from 'express'
 import { requireAuth } from '../../middleware/auth.js'
-import { authLimiter, emailLimiter, refreshLimiter, requireCsrfHeader } from '../../middleware/security.js'
+import { authLimiter, otpLimiter, refreshLimiter, requireCsrfHeader } from '../../middleware/security.js'
 import * as c from './auth.controller.js'
 
 export const authRouter = Router()
 
+// Phone + one-time code. Email/password sign-up, verification and reset were retired.
+authRouter.post('/otp/request', otpLimiter, c.requestOtp)
 authRouter.post('/register', authLimiter, c.register)
 authRouter.post('/login', authLimiter, c.login)
-authRouter.post('/verify-email', authLimiter, c.verifyEmail)
-authRouter.post('/resend-verification', emailLimiter, c.resendVerification)
-authRouter.post('/forgot-password', emailLimiter, c.forgotPassword)
-authRouter.post('/reset-password', authLimiter, c.resetPassword)
 
 // Cookie-authenticated endpoints: CSRF-guarded.
 authRouter.post('/refresh', refreshLimiter, requireCsrfHeader, c.refresh)

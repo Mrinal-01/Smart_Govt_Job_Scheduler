@@ -5,6 +5,7 @@ import { useAuth } from '../../auth/AuthContext'
 import { useStudy } from '../../store/StudyStore'
 import { ApiError, api, errorMessage, setAccessToken } from '../../lib/http'
 import { PasswordRules, passwordProblems } from '../auth/AuthShared'
+import { formatPhone } from '../../lib/phone'
 
 /* ------------------------------ Account ------------------------------ */
 
@@ -35,13 +36,18 @@ export function AccountSection() {
         <Field label="Full name">
           <Input value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label="Email" hint="Email changes are not supported yet; contact the operator.">
-          <Input value={user.email} readOnly />
+        <Field label="Mobile number" hint="You sign in with this number and a one-time code. Changing it is not supported yet.">
+          <Input value={user.phone ? formatPhone(user.phone) : 'Not set — ask the operator to attach one'} readOnly />
         </Field>
+        {user.email ? (
+          <Field label="Email (legacy account)">
+            <Input value={user.email} readOnly />
+          </Field>
+        ) : null}
       </div>
       <div className="pill-row" style={{ marginTop: 12 }}>
-        <Badge tone={user.emailVerified ? 'success' : 'warning'} dot>
-          {user.emailVerified ? 'Email verified' : 'Email not verified'}
+        <Badge tone={user.phoneVerified ? 'success' : 'warning'} dot>
+          {user.phoneVerified ? 'Mobile verified' : 'Mobile not verified yet'}
         </Badge>
         <Badge dot>Member since {new Date(user.createdAt).toLocaleDateString()}</Badge>
       </div>
@@ -93,7 +99,7 @@ export function SecuritySection() {
   }, [load])
 
   const changePassword = async () => {
-    const problems = passwordProblems(pw.next, user?.email)
+    const problems = passwordProblems(pw.next, user?.email ?? '')
     if (!pw.current) return setPwError('Enter your current password.')
     if (problems.length) return setPwError(problems[0])
     if (pw.next !== pw.confirm) return setPwError('Passwords do not match.')
@@ -159,8 +165,9 @@ export function SecuritySection() {
           </Button>
         </div>
       </Card>
+      {user?.hasPassword ? (
       <Card>
-        <CardHeader title="Change password" subtitle="Changing it signs out every other device" icon={<KeyRound size={15} />} />
+        <CardHeader title="Change password" subtitle="Legacy email accounts only — changing it signs out every other device" icon={<KeyRound size={15} />} />
         <div className="grid grid--3" style={{ gap: 12 }}>
           <Field label="Current password">
             <Input type="password" autoComplete="current-password" value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} />
@@ -172,7 +179,7 @@ export function SecuritySection() {
             <Input type="password" autoComplete="new-password" value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value })} />
           </Field>
         </div>
-        <PasswordRules password={pw.next} email={user?.email} />
+        <PasswordRules password={pw.next} email={user?.email ?? ''} />
         {pwError ? <div className="callout callout--danger" style={{ marginTop: 10 }}>{pwError}</div> : null}
         <div className="row" style={{ justifyContent: 'flex-end', marginTop: 12 }}>
           <Button variant="primary" loading={busy} onClick={changePassword} disabled={!pw.next}>
@@ -180,6 +187,7 @@ export function SecuritySection() {
           </Button>
         </div>
       </Card>
+      ) : null}
       <ConfirmDialog
         open={confirmAll}
         onClose={() => setConfirmAll(false)}
@@ -353,6 +361,227 @@ export function RevisionPreferencesSection() {
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <Button variant="primary" icon={<Save size={14} />} loading={busy} onClick={save}>
             Save preferences
+          </Button>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+/* ------------------- Study plan: cycles, gates, calendar ------------------- */
+
+interface PlanSettings {
+  timezone: string
+  cycle: { cyclesPerDay: number; sessionMinutes: number; breakMinutes: number }
+  plan: {
+    sameDayRevisionMinutes: number
+    nextDayRevisionEnabled: boolean
+    nextDayRevisionMinutes: number
+    carryoverScope: 'per_subject' | 'all_subjects'
+    weeklyRevisionMinutes: number
+    weeklyReviewWeekday: number
+    restWeekdays: number[]
+    holidays: string[]
+    requirePracticeInRevision: boolean
+  }
+}
+
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+const TIMEZONES = ['Asia/Kolkata', 'Asia/Dubai', 'Asia/Dhaka', 'Asia/Kathmandu', 'Asia/Singapore', 'Europe/London', 'America/New_York', 'UTC']
+
+function isValidZone(tz: string) {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function PlanPreferencesSection() {
+  const { notify } = useStudy()
+  const [cfg, setCfg] = useState<PlanSettings | null>(null)
+  const [holiday, setHoliday] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  useEffect(() => {
+    api<{ settings: PlanSettings }>('/api/settings')
+      .then((r) => setCfg({ timezone: r.settings.timezone, cycle: r.settings.cycle, plan: r.settings.plan }))
+      .catch((err) => notify({ title: 'Could not load study plan settings', message: errorMessage(err), variant: 'error' }))
+  }, [notify])
+  if (!cfg) return <Card><LoadingBlock /></Card>
+
+  const num = (v: string) => (v === '' ? NaN : Number(v))
+  const setCycle = (k: keyof PlanSettings['cycle'], v: string) => setCfg({ ...cfg, cycle: { ...cfg.cycle, [k]: num(v) } })
+  const setPlan = <K extends keyof PlanSettings['plan']>(k: K, v: PlanSettings['plan'][K]) => setCfg({ ...cfg, plan: { ...cfg.plan, [k]: v } })
+
+  const validate = () => {
+    const e: Record<string, string> = {}
+    const range = (key: string, v: number, min: number, max: number) => {
+      if (!Number.isInteger(v) || v < min || v > max) e[key] = `Whole number ${min}–${max}`
+    }
+    range('cyclesPerDay', cfg.cycle.cyclesPerDay, 1, 8)
+    range('sessionMinutes', cfg.cycle.sessionMinutes, 10, 300)
+    range('breakMinutes', cfg.cycle.breakMinutes, 0, 120)
+    range('sameDay', cfg.plan.sameDayRevisionMinutes, 1, 180)
+    range('nextDay', cfg.plan.nextDayRevisionMinutes, 1, 180)
+    range('weekly', cfg.plan.weeklyRevisionMinutes, 1, 300)
+    if (!isValidZone(cfg.timezone)) e.timezone = 'Unknown time zone'
+    if (cfg.plan.restWeekdays.length > 6) e.rest = 'At least one study day is required'
+    setErrors(e)
+    return Object.keys(e).length === 0
+  }
+
+  const save = async () => {
+    if (!validate()) return
+    setBusy(true)
+    try {
+      const r = await api<{ settings: PlanSettings }>('/api/settings', { method: 'PATCH', body: {
+          timezone: cfg.timezone,
+          // Only the fields this section edits — subject order / per-subject minutes belong to the section above.
+          cycle: { cyclesPerDay: cfg.cycle.cyclesPerDay, sessionMinutes: cfg.cycle.sessionMinutes, breakMinutes: cfg.cycle.breakMinutes },
+          plan: cfg.plan
+        } })
+      setCfg({ timezone: r.settings.timezone, cycle: r.settings.cycle, plan: r.settings.plan })
+      notify({ title: 'Study plan settings saved', variant: 'success' })
+    } catch (err) {
+      notify({ title: 'Could not save', message: err instanceof ApiError && err.issues.length ? err.issues[0].message : errorMessage(err), variant: 'error' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const addHoliday = () => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(holiday)) return
+    if (!cfg.plan.holidays.includes(holiday)) setPlan('holidays', [...cfg.plan.holidays, holiday].sort())
+    setHoliday('')
+  }
+
+  const val = (n: number) => (Number.isNaN(n) ? '' : n)
+
+  return (
+    <Card>
+      <CardHeader
+        title="Study cycles & revision gates"
+        subtitle="Server-enforced: these rules decide when scheduled learning sessions unlock"
+        icon={<Repeat size={15} />}
+      />
+      <div className="stack">
+        <Field
+          label="Study-day time zone"
+          hint="Defines when your study day starts and ends (midnight) for sessions, next-day carryover and weekly revision."
+          error={errors.timezone}
+        >
+          <Select value={cfg.timezone} onChange={(e) => setCfg({ ...cfg, timezone: e.target.value })}>
+            {(TIMEZONES.includes(cfg.timezone) ? TIMEZONES : [cfg.timezone, ...TIMEZONES]).map((tz) => (
+              <option key={tz} value={tz}>
+                {tz}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        <p className="field__label">Cycle configuration (used by “Generate cycles” on the schedule)</p>
+        <div className="grid grid--3">
+          <Field label="Cycles per day" error={errors.cyclesPerDay}>
+            <Input type="number" min={1} max={8} value={val(cfg.cycle.cyclesPerDay)} onChange={(e) => setCycle('cyclesPerDay', e.target.value)} />
+          </Field>
+          <Field label="Session length (min)" error={errors.sessionMinutes}>
+            <Input type="number" min={10} max={300} value={val(cfg.cycle.sessionMinutes)} onChange={(e) => setCycle('sessionMinutes', e.target.value)} />
+          </Field>
+          <Field label="Break between sessions (min)" error={errors.breakMinutes}>
+            <Input type="number" min={0} max={120} value={val(cfg.cycle.breakMinutes)} onChange={(e) => setCycle('breakMinutes', e.target.value)} />
+          </Field>
+        </div>
+        <p className="field__hint">Subject order and per-subject revision minutes are set in the section above.</p>
+
+        <p className="field__label">Revision durations</p>
+        <div className="grid grid--3">
+          <Field label="Same-day revision (min)" hint="Default when a session or subject has none" error={errors.sameDay}>
+            <Input type="number" min={1} max={180} value={val(cfg.plan.sameDayRevisionMinutes)} onChange={(e) => setPlan('sameDayRevisionMinutes', num(e.target.value))} />
+          </Field>
+          <Field label="Next-day carryover (min per subject)" error={errors.nextDay}>
+            <Input type="number" min={1} max={180} value={val(cfg.plan.nextDayRevisionMinutes)} onChange={(e) => setPlan('nextDayRevisionMinutes', num(e.target.value))} />
+          </Field>
+          <Field label="Weekly revision (min per subject)" error={errors.weekly}>
+            <Input type="number" min={1} max={300} value={val(cfg.plan.weeklyRevisionMinutes)} onChange={(e) => setPlan('weeklyRevisionMinutes', num(e.target.value))} />
+          </Field>
+        </div>
+        <Toggle
+          checked={cfg.plan.nextDayRevisionEnabled}
+          onChange={(v) => setPlan('nextDayRevisionEnabled', v)}
+          label="Require next-day carryover revision"
+          description="Topics you fully completed on the previous study day are revised the next day before new learning."
+        />
+        {cfg.plan.nextDayRevisionEnabled ? (
+          <Field label="How the next-day revision gates learning">
+            <Select value={cfg.plan.carryoverScope ?? 'per_subject'} onChange={(e) => setPlan('carryoverScope', e.target.value as PlanSettings['plan']['carryoverScope'])}>
+              <option value="per_subject">Per subject — each subject revises its own previous-day topics right before it starts</option>
+              <option value="all_subjects">All subjects first — the whole carryover block before any learning</option>
+            </Select>
+          </Field>
+        ) : null}
+        <Toggle
+          checked={cfg.plan.requirePracticeInRevision}
+          onChange={(v) => setPlan('requirePracticeInRevision', v)}
+          label="Require practice questions in same-day / next-day revision"
+          description="A revision can only be completed after recording at least one attempted question."
+        />
+
+        <p className="field__label">Study calendar</p>
+        <Field label="Weekly review day">
+          <Select value={String(cfg.plan.weeklyReviewWeekday)} onChange={(e) => setPlan('weeklyReviewWeekday', Number(e.target.value))}>
+            {WEEKDAY_NAMES.map((d, i) => (
+              <option key={d} value={i}>
+                {d}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Rest days" hint="No sessions are created; carryover revision falls due on the next study day." error={errors.rest}>
+          <div className="row row--wrap" style={{ gap: 10 }}>
+            {WEEKDAY_NAMES.map((d, i) => (
+              <label key={d} className="row" style={{ gap: 5, fontSize: 12.5 }}>
+                <input
+                  type="checkbox"
+                  className="checkbox"
+                  checked={cfg.plan.restWeekdays.includes(i)}
+                  onChange={(e) => setPlan('restWeekdays', e.target.checked ? [...cfg.plan.restWeekdays, i].sort() : cfg.plan.restWeekdays.filter((x) => x !== i))}
+                />
+                {d.slice(0, 3)}
+              </label>
+            ))}
+          </div>
+        </Field>
+        <Field label="Holidays" hint="Specific dates with no study.">
+          <div className="stack stack--sm">
+            <div className="row" style={{ gap: 8 }}>
+              <Input type="date" value={holiday} onChange={(e) => setHoliday(e.target.value)} style={{ maxWidth: 180 }} />
+              <Button size="sm" onClick={addHoliday} disabled={!holiday}>
+                Add holiday
+              </Button>
+            </div>
+            {cfg.plan.holidays.length ? (
+              <div className="row row--wrap" style={{ gap: 6 }}>
+                {cfg.plan.holidays.map((h) => (
+                  <span key={h} className="holiday-chip">
+                    {h}
+                    <button type="button" aria-label={`Remove ${h}`} onClick={() => setPlan('holidays', cfg.plan.holidays.filter((x) => x !== h))}>
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <span className="text-tertiary" style={{ fontSize: 12 }}>
+                No holidays set.
+              </span>
+            )}
+          </div>
+        </Field>
+        <div className="row" style={{ justifyContent: 'flex-end' }}>
+          <Button variant="primary" icon={<Save size={14} />} loading={busy} onClick={save}>
+            Save study plan settings
           </Button>
         </div>
       </div>

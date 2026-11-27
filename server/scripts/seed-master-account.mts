@@ -4,7 +4,8 @@
  *
  *   npm run seed:master               (from the project root)
  *
- * - Email already verified, password set (override with MASTER_ACCOUNT_EMAIL / MASTER_ACCOUNT_PASSWORD)
+ * - Phone login (MASTER_ACCOUNT_PHONE, default +919000000001); email/password kept on the record
+ *   only for reference (override with MASTER_ACCOUNT_EMAIL / MASTER_ACCOUNT_PASSWORD)
  * - Workspace with the demo 365-day dataset
  * - Schedule v1 published (baseline)
  * - 36 sample questions, already VERIFIED, so mock tests can be built immediately
@@ -21,11 +22,19 @@ import * as M from '../src/models/index.ts'
 import { hashPassword } from '../src/modules/auth/auth.service.ts'
 import { publish } from '../src/modules/schedule/schedule.service.ts'
 import { normalizeForHash } from '../src/modules/documents/extraction/questionParser.ts'
+import { normalizePhone } from '../src/lib/phone.ts'
 import { buildSeedState, chapterIdFor, subjectIdFor, topicIdFor } from '../../src/data/seed.ts'
 import { QUESTION_BANK } from '../../src/data/questions.ts'
 
 const EMAIL = (process.env.MASTER_ACCOUNT_EMAIL ?? 'tester@studyos.local').toLowerCase()
 const PASSWORD = process.env.MASTER_ACCOUNT_PASSWORD ?? 'StudyOS-Test-2026'
+const phoneInput = process.env.MASTER_ACCOUNT_PHONE ?? '+919000000001'
+const normalized = normalizePhone(phoneInput)
+if ('error' in normalized) {
+  console.error(`MASTER_ACCOUNT_PHONE is invalid: ${normalized.error}`)
+  process.exit(1)
+}
+const PHONE = normalized.phone
 const NAME = 'StudyOS Master'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const pdfPath = path.resolve(here, '../../samples/sample-question-paper.pdf')
@@ -38,8 +47,7 @@ if (env.isProd) {
 async function wipe(userId: M.UserDoc['_id']) {
   const owned = [
     M.RefreshSession, M.EmailVerificationToken, M.PasswordResetToken, M.StudyWorkspace, M.UserSettings,
-    M.Notification, M.Schedule, M.ScheduleVersion, M.StudyCycle, M.CycleSubjectBlock, M.StudyLog, M.RevisionTask,
-    M.RevisionLog, M.UploadedDocument, M.ProcessingJob, M.Question, M.MockTest, M.MockTestAttempt, M.MockTestAnswer,
+    M.Notification, M.Schedule, M.ScheduleVersion, M.StudySession, M.RevisionObligation, M.RevisionAttempt, M.GateOverride, M.UploadedDocument, M.ProcessingJob, M.Question, M.MockTest, M.MockTestAttempt, M.MockTestAnswer,
     M.ExamMistake, M.AIUsageLog
   ]
   for (const model of owned) await (model as unknown as { deleteMany: (f: object) => Promise<unknown> }).deleteMany({ userId })
@@ -48,11 +56,15 @@ async function wipe(userId: M.UserDoc['_id']) {
 
 await connectDb(env.MONGODB_URI)
 
-const existing = await M.User.findOne({ email: EMAIL })
+const existing = await M.User.findOne({ $or: [{ email: EMAIL }, { phone: PHONE }] })
 if (existing) await wipe(existing._id)
+await M.PhoneOtp.deleteMany({ phone: PHONE })
 const user = existing ?? new M.User({ email: EMAIL, termsAcceptedAt: new Date() })
 user.set({
   name: NAME,
+  email: EMAIL,
+  phone: PHONE,
+  phoneVerifiedAt: new Date(),
   passwordHash: await hashPassword(PASSWORD),
   emailVerified: true,
   emailVerifiedAt: new Date(),
@@ -102,8 +114,8 @@ const perSubject = data.subjects.map((s) => `${s.name}: ${questions.filter((q) =
 console.log(`
 Master account ready (development only)
   URL:       ${env.PUBLIC_APP_URL}/login
-  Email:     ${EMAIL}
-  Password:  ${PASSWORD}
+  Phone:     ${PHONE}  (log in with a one-time code — in development it is shown on the login
+             screen, printed in the API log and listed at GET /api/dev/sms)
   Workspace: demo data (365 days), schedule v1 published
   Questions: ${questions.length} verified sample questions (${perSubject})
   Sample PDF for the upload flow: ${pdfPath}

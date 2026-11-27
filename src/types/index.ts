@@ -98,6 +98,19 @@ export interface ScheduleSlot {
   reminderEnabled: boolean
   breakAfterMinutes: number
   order: number
+  /* Study-plan fields — optional so slots saved before they existed stay valid. */
+  /** learning (default) | revision | practice | mock_test */
+  sessionType?: 'learning' | 'revision' | 'practice' | 'mock_test'
+  /** Study cycle this session belongs to; null = derived from the subject's order that day. */
+  cycleNumber?: number | null
+  chapterId?: ID | null
+  topicIds?: ID[]
+  /** Same-day revision duration for this session; null = subject/default setting. */
+  revisionMinutes?: number | null
+  /** Which earlier learning must be revised first (server-enforced). */
+  revisionPolicy?: 'previous_cycle' | 'all_previous_cycles' | 'none'
+  /** Sessions on the same day that must be completed before this one can start. */
+  prerequisiteSlotIds?: ID[]
 }
 
 export type SessionStatus =
@@ -255,7 +268,9 @@ export interface MockAttempt {
 
 /* ---------------- Settings & profile ---------------- */
 
-export type SoundChoice = 'chime' | 'bell' | 'pulse' | 'none'
+export type BuiltInSound = 'chime' | 'bell' | 'pulse' | 'digital' | 'marimba' | 'gong' | 'alarm' | 'ping'
+/** A built-in synthesized tone, a student-uploaded sound (`custom:<id>`) or silence. */
+export type SoundChoice = BuiltInSound | `custom:${string}` | 'none'
 export type ThemeChoice = 'light' | 'dark' | 'system'
 
 export interface ReminderSettings {

@@ -7,8 +7,11 @@ import mongoose, { Schema, type InferSchemaType, type HydratedDocument } from 'm
 const userSchema = new Schema(
   {
     name: { type: String, required: true, trim: true, maxlength: 80 },
-    /** Always stored normalized (trimmed + lower-cased). */
-    email: { type: String, required: true, trim: true, lowercase: true, maxlength: 254 },
+    /** Optional since phone sign-up. Stored normalized (trimmed + lower-cased) when present. */
+    email: { type: String, trim: true, lowercase: true, maxlength: 254 },
+    /** E.164 (e.g. +919876543210). The sign-in identifier for phone/OTP accounts. */
+    phone: { type: String, trim: true, maxlength: 16 },
+    phoneVerifiedAt: { type: Date, default: null },
     passwordHash: { type: String, select: false, default: null },
     emailVerified: { type: Boolean, default: false },
     emailVerifiedAt: { type: Date, default: null },
@@ -23,7 +26,9 @@ const userSchema = new Schema(
   },
   { timestamps: true }
 )
-userSchema.index({ email: 1 }, { unique: true })
+// Unique only when present, so phone-only accounts (no email) and email-only legacy accounts coexist.
+userSchema.index({ email: 1 }, { unique: true, partialFilterExpression: { email: { $type: 'string' } }, name: 'email_unique_when_present' })
+userSchema.index({ phone: 1 }, { unique: true, partialFilterExpression: { phone: { $type: 'string' } }, name: 'phone_unique_when_present' })
 
 export type UserDoc = HydratedDocument<InferSchemaType<typeof userSchema>>
 export const User = mongoose.model('User', userSchema)
@@ -76,3 +81,29 @@ function oneTimeTokenSchema() {
 
 export const EmailVerificationToken = mongoose.model('EmailVerificationToken', oneTimeTokenSchema())
 export const PasswordResetToken = mongoose.model('PasswordResetToken', oneTimeTokenSchema())
+
+/* ------------------------------------------------------------------ */
+/* Phone OTP — one active code per (phone, purpose)                    */
+/* ------------------------------------------------------------------ */
+
+const phoneOtpSchema = new Schema(
+  {
+    phone: { type: String, required: true },
+    purpose: { type: String, enum: ['signup', 'login'], required: true },
+    /** HMAC-SHA256(OTP_SECRET, phone:purpose:code). The code itself is never stored. Null once invalidated. */
+    codeHash: { type: String, default: null },
+    expiresAt: { type: Date, required: true },
+    attempts: { type: Number, default: 0 },
+    consumedAt: { type: Date, default: null },
+    lastSentAt: { type: Date, default: null },
+    /** Rolling send window for the per-number hourly cap. */
+    windowStart: { type: Date, required: true },
+    sendCount: { type: Number, default: 0 },
+    /** Document removal time (TTL): after both the code and the send window have expired. */
+    purgeAt: { type: Date, required: true }
+  },
+  { timestamps: true }
+)
+phoneOtpSchema.index({ phone: 1, purpose: 1 }, { unique: true })
+phoneOtpSchema.index({ purgeAt: 1 }, { expireAfterSeconds: 0 })
+export const PhoneOtp = mongoose.model('PhoneOtp', phoneOtpSchema)

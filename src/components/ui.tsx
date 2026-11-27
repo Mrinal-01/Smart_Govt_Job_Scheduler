@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import React, { createContext, useContext, useEffect, useId, useRef, useState } from 'react'
 import { AlertTriangle, Check, ChevronDown, Info, Loader2, X, XCircle } from 'lucide-react'
 import { cx } from '../lib/utils'
@@ -393,7 +394,8 @@ export function Modal({
 
   if (!open) return null
 
-  return (
+  // Rendered into <body> so no parent stacking context (cards, timelines, sticky headers) can paint over it.
+  return createPortal(
     <div className="modal-root" role="presentation">
       <div className="modal-backdrop" onClick={() => dismissible && onClose()} />
       <div className={cx('modal', `modal--${size}`)} role="dialog" aria-modal="true" aria-label={typeof title === 'string' ? title : 'Dialog'} ref={ref}>
@@ -409,7 +411,8 @@ export function Modal({
         <div className="modal__body">{children}</div>
         {footer ? <footer className="modal__footer">{footer}</footer> : null}
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 

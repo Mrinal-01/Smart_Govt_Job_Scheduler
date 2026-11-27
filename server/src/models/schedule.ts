@@ -26,7 +26,15 @@ const slotSchema = new Schema(
     practiceTarget: { type: Number, default: 0 },
     reminderEnabled: { type: Boolean, default: true },
     breakAfterMinutes: { type: Number, default: 0 },
-    order: { type: Number, default: 0 }
+    order: { type: Number, default: 0 },
+    /* Study-plan fields (absent on versions published before they existed — read through normalizeSlot). */
+    sessionType: { type: String, enum: ['learning', 'revision', 'practice', 'mock_test'], default: 'learning' },
+    cycleNumber: { type: Number, default: null },
+    chapterId: { type: String, default: null },
+    topicIds: { type: [String], default: [] },
+    revisionMinutes: { type: Number, default: null },
+    revisionPolicy: { type: String, enum: ['previous_cycle', 'all_previous_cycles', 'none'], default: null },
+    prerequisiteSlotIds: { type: [String], default: [] }
   },
   { _id: false }
 )

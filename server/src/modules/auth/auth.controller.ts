@@ -8,17 +8,19 @@ import { sha256 } from '../../lib/crypto.js'
 import { RefreshSession } from '../../models/index.js'
 import * as v from './auth.validators.js'
 
-const GENERIC_EMAIL_RESPONSE = { message: 'If an account matches that email, we have sent instructions to it.' }
-
 function sendSession(res: Response, result: { accessToken: string; expiresIn: number; refreshToken: string; user: auth.PublicUser }, status = 200) {
   setRefreshCookie(res, result.refreshToken)
   res.status(status).json({ accessToken: result.accessToken, expiresIn: result.expiresIn, user: result.user })
 }
 
+export const requestOtp = asyncHandler(async (req, res) => {
+  const input = parse(v.otpRequestSchema, req.body)
+  res.json({ phone: input.phone, ...(await auth.requestOtp(input.phone, input.purpose)) })
+})
+
 export const register = asyncHandler(async (req, res) => {
   const input = parse(v.registerSchema, req.body)
-  const result = await auth.register(input)
-  res.status(201).json(result)
+  sendSession(res, await auth.register(input, req), 201)
 })
 
 export const login = asyncHandler(async (req, res) => {
@@ -64,30 +66,6 @@ export const me = asyncHandler(async (req, res) => {
 export const updateMe = asyncHandler(async (req, res) => {
   const { name } = parse(v.updateProfileSchema, req.body)
   res.json({ user: await auth.updateProfile(authOf(req).userId, name) })
-})
-
-export const verifyEmail = asyncHandler(async (req, res) => {
-  const { token } = parse(v.tokenSchema, req.body)
-  res.json({ user: await auth.verifyEmail(token), message: 'Email verified. You can now sign in.' })
-})
-
-export const resendVerification = asyncHandler(async (req, res) => {
-  const { email } = parse(v.emailOnlySchema, req.body)
-  await auth.resendVerification(email)
-  res.status(202).json(GENERIC_EMAIL_RESPONSE)
-})
-
-export const forgotPassword = asyncHandler(async (req, res) => {
-  const { email } = parse(v.emailOnlySchema, req.body)
-  await auth.forgotPassword(email)
-  res.status(202).json(GENERIC_EMAIL_RESPONSE)
-})
-
-export const resetPassword = asyncHandler(async (req, res) => {
-  const input = parse(v.resetPasswordSchema, req.body)
-  await auth.resetPassword(input.token, input.password)
-  clearRefreshCookie(res)
-  res.json({ message: 'Password updated. Sign in with your new password.' })
 })
 
 export const changePassword = asyncHandler(async (req, res) => {

@@ -1,9 +1,8 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Brain, Inbox, Mail } from 'lucide-react'
+import { Brain, MessageSquareText } from 'lucide-react'
 import { useAuth } from '../../auth/AuthContext'
-import { api } from '../../lib/http'
-import { Button } from '../../components/ui'
+import { Field, Input } from '../../components/ui'
 
 export function AuthLayout({ title, subtitle, children, footer }: { title: string; subtitle?: React.ReactNode; children: React.ReactNode; footer?: React.ReactNode }) {
   const { configError } = useAuth()
@@ -50,42 +49,98 @@ export function PasswordRules({ password, email }: { password: string; email?: s
   )
 }
 
-/**
- * Development-only helper: with MAIL_DRIVER=console no email is delivered, so
- * the server keeps the links in memory. Hidden unless the server says so.
- */
-export function DevMailbox({ tag }: { tag: 'verify-email' | 'reset-password' }) {
-  const { config } = useAuth()
-  const [messages, setMessages] = useState<Array<{ to: string; subject: string; link?: string; tag: string; sentAt: string }> | null>(null)
-  if (!config?.devMailbox) return null
-  const load = async () => {
-    const r = await api<{ messages: Array<{ to: string; subject: string; link?: string; tag: string; sentAt: string }> }>('/api/dev/mailbox', { auth: false })
-    setMessages(r.messages.filter((m) => m.tag === tag))
-  }
+/* ------------------------------------------------------------------ */
+/* Phone + OTP helpers                                                 */
+/* ------------------------------------------------------------------ */
+
+/** Client mirror of the server rule for Indian mobiles (the server stays authoritative). */
+export function phoneProblem(national: string): string | null {
+  if (!national) return 'Enter your 10-digit mobile number.'
+  if (!/^\d+$/.test(national)) return 'Use digits only.'
+  if (national.length !== 10) return 'A mobile number has exactly 10 digits.'
+  if (!/^[6-9]/.test(national)) return 'Indian mobile numbers start with 6, 7, 8 or 9.'
+  return null
+}
+
+export const toE164 = (national: string) => `+91${national}`
+
+/** Fixed +91 prefix and a 10-digit numeric input. */
+export function PhoneField({
+  id,
+  value,
+  onChange,
+  error,
+  disabled
+}: {
+  id: string
+  value: string
+  onChange: (digits: string) => void
+  error?: string
+  disabled?: boolean
+}) {
   return (
-    <div className="callout callout--neutral dev-mailbox">
-      <Inbox size={14} />
-      <div style={{ flex: 1 }}>
-        <strong>Development mailbox.</strong> Email delivery is off (MAIL_DRIVER=console), so links are also printed in the API log.
-        <div style={{ marginTop: 8 }}>
-          <Button size="sm" icon={<Mail size={13} />} onClick={load}>
-            Show recent emails
-          </Button>
-        </div>
-        {messages ? (
-          messages.length ? (
-            <ul className="dev-mailbox__list">
-              {messages.slice(0, 5).map((m) => (
-                <li key={m.sentAt + m.to}>
-                  <span className="mono">{m.to}</span> — {m.link ? <a href={m.link}>open link</a> : m.subject}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p style={{ marginTop: 6 }}>No emails yet.</p>
-          )
-        ) : null}
+    <Field label="Mobile number" htmlFor={id} error={error} required>
+      <div className="phone-input">
+        <span className="phone-input__cc" aria-hidden="true">
+          +91
+        </span>
+        <Input
+          id={id}
+          type="tel"
+          inputMode="numeric"
+          autoComplete="tel-national"
+          placeholder="98765 43210"
+          maxLength={10}
+          value={value}
+          disabled={disabled}
+          aria-label="10-digit mobile number"
+          onChange={(e) => onChange(e.target.value.replace(/\D/g, '').slice(0, 10))}
+        />
       </div>
+    </Field>
+  )
+}
+
+export function OtpField({ id, value, onChange, error }: { id: string; value: string; onChange: (code: string) => void; error?: string }) {
+  return (
+    <Field label="6-digit code" htmlFor={id} error={error} required hint="Sent by SMS. It expires in 5 minutes.">
+      <Input
+        id={id}
+        className="otp-input"
+        type="text"
+        inputMode="numeric"
+        autoComplete="one-time-code"
+        maxLength={6}
+        placeholder="••••••"
+        value={value}
+        autoFocus
+        onChange={(e) => onChange(e.target.value.replace(/\D/g, '').slice(0, 6))}
+      />
+    </Field>
+  )
+}
+
+/** Seconds left until `until` (epoch ms), ticking once a second. */
+export function useCountdown(until: number | null) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!until) return
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [until])
+  return until ? Math.max(0, Math.ceil((until - now) / 1000)) : 0
+}
+
+/** Development only: shows the code the console SMS driver "sent". Never rendered in production. */
+export function DevCode({ code }: { code?: string }) {
+  const { config } = useAuth()
+  if (!code || !config?.devSms) return null
+  return (
+    <div className="callout callout--neutral">
+      <MessageSquareText size={14} />
+      <span>
+        Development SMS (not sent): your code is <strong className="mono">{code}</strong>. It is also printed in the API log and listed at <span className="mono">/api/dev/sms</span>.
+      </span>
     </div>
   )
 }

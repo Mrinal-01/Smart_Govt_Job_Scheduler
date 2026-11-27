@@ -28,22 +28,6 @@ aiRouter.get(
 )
 
 aiRouter.post(
-  '/analyze',
-  aiBurst,
-  asyncHandler(async (req, res) => {
-    const body = parse(
-      z.object({
-        mode: z.enum(svc.ANALYSIS_MODES),
-        message: z.string().max(2000).optional(),
-        history: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.string().max(6000) })).max(12).optional()
-      }),
-      req.body
-    )
-    res.json(await svc.analyze(authOf(req).userId, body.mode, body.message, body.history))
-  })
-)
-
-aiRouter.post(
   '/explain-answer',
   aiBurst,
   asyncHandler(async (req, res) => {

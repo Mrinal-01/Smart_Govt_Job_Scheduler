@@ -21,6 +21,8 @@ import { useStudy } from '../store/StudyStore'
 import { chapterAccuracy, classifyRevision, logsInRange, subjectProgress, topicMastery } from '../store/selectors'
 import { addDays, formatDuration, formatShortDate, startOfWeek, weekdayOf } from '../lib/date'
 import { cx, sum } from '../lib/utils'
+import { ObligationCard, RevisionWorkspace } from '../components/revision'
+import { planApi, usePlanResource } from '../lib/plan'
 
 export default function SundayPage() {
   const { state, today, logRevision, notify } = useStudy()
@@ -75,7 +77,7 @@ export default function SundayPage() {
       ? state.mockTests.find((m) => m.chapterId === chapter.id)
       : state.mockTests.find((m) => m.subjectId === subject.id && m.type === 'chapter')
     if (mock) {
-      navigate(`/mock-tests/${mock.id}`)
+      navigate('/tests')
       return
     }
     /* fall back to the weekly mixed test */
@@ -86,7 +88,7 @@ export default function SundayPage() {
         message: `Opening the ${weekly.title} instead — it includes ${subject.shortName} questions.`,
         variant: 'info'
       })
-      navigate(`/mock-tests/${weekly.id}`)
+      navigate('/tests')
     } else {
       notify({ title: 'No mock test available', message: 'Mock tests are generated from the demo question bank.', variant: 'warning' })
     }
@@ -118,6 +120,8 @@ export default function SundayPage() {
           </Button>
         </div>
       </div>
+
+      <WeeklyRevisionSection />
 
       {/* ------------------------------- hero ------------------------------- */}
       <div className="result-hero section">
@@ -250,7 +254,7 @@ export default function SundayPage() {
               subtitle="Chapter-wise and full-length tests are the Sunday accountability check"
               icon={<Target size={15} />}
               actions={
-                <Button size="sm" variant="primary" icon={<Play size={12} />} onClick={() => navigate('/mock-tests')}>
+                <Button size="sm" variant="primary" icon={<Play size={12} />} onClick={() => navigate('/tests')}>
                   All tests
                 </Button>
               }
@@ -275,7 +279,7 @@ export default function SundayPage() {
                     ) : (
                       <Badge tone="warning" size="sm">Not attempted this week</Badge>
                     )}
-                    <Button variant="primary" size="sm" block icon={<Play size={12} />} onClick={() => navigate(`/mock-tests/${mock.id}`)}>
+                    <Button variant="primary" size="sm" block icon={<Play size={12} />} onClick={() => navigate('/tests')}>
                       Start
                     </Button>
                   </div>
@@ -347,30 +351,6 @@ export default function SundayPage() {
           ) : null}
         </div>
       )}
-
-      <Card>
-        <CardHeader title="How Sunday review differs" icon={<Sparkles size={15} />} />
-        <div className="grid grid--3" style={{ gap: 14 }}>
-          <div>
-            <p className="field__label" style={{ marginBottom: 4 }}>No new learning</p>
-            <p className="stat__hint">
-              Sunday sessions are revision-flagged only. New chapters resume Monday.
-            </p>
-          </div>
-          <div>
-            <p className="field__label" style={{ marginBottom: 4 }}>Weekly revision counts separately</p>
-            <p className="stat__hint">
-              Marking a topic revised here records a <strong>weekly</strong> revision — never confused with same-day or next-day.
-            </p>
-          </div>
-          <div>
-            <p className="field__label" style={{ marginBottom: 4 }}>Tests drive next week</p>
-            <p className="stat__hint">
-              Wrong answers auto-fill the Mistake Bank and re-prioritise the next week’s revision order.
-            </p>
-          </div>
-        </div>
-      </Card>
 
       {/* --------------------------- revision modal --------------------------- */}
       <Modal
@@ -467,6 +447,127 @@ export default function SundayPage() {
         ) : null}
       </Modal>
     </main>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Weekly revision (server-tracked)                                    */
+/* ------------------------------------------------------------------ */
+
+function WeeklyRevisionSection() {
+  const { data, error, loading } = usePlanResource(() => planApi.weekly(), [])
+  const [openId, setOpenId] = useState<string | null>(null)
+  if (error) {
+    return (
+      <Card className="section">
+        <CardHeader title="Weekly revision" icon={<Sparkles size={15} />} />
+        <div className="callout callout--danger">{error}</div>
+      </Card>
+    )
+  }
+  if (loading && !data) {
+    return (
+      <Card className="section">
+        <CardHeader title="Weekly revision" icon={<Sparkles size={15} />} />
+        <p className="text-tertiary">Loading this week’s revision…</p>
+      </Card>
+    )
+  }
+  if (!data) return null
+  const p = data.progress
+  const sm = data.summary
+  return (
+    <Card className="section">
+      <CardHeader
+        title="Weekly revision"
+        subtitle={`${formatShortDate(data.weekStart)} – ${formatShortDate(data.weekEnd)} · due ${formatShortDate(data.dueDate)} · ${p.completed}/${p.total} subjects and ${p.topicsRevised}/${p.topicsTotal} topics revised`}
+        icon={<Sparkles size={15} />}
+      />
+      <Progress value={p.completed} max={Math.max(1, p.total)} tone={p.total && p.completed === p.total ? 'success' : 'accent'} height={5} />
+
+      <div className="grid grid--2" style={{ gap: 14, marginTop: 14, alignItems: 'start' }}>
+        <div className="stack" style={{ gap: 8 }}>
+          <p className="queue-label">Subject-wise weekly revision</p>
+          {data.obligations.length ? (
+            <div className="rev-list">
+              {data.obligations.map((o) => (
+                <ObligationCard key={o.id} obligation={o} onOpen={(x) => setOpenId(x.id)} />
+              ))}
+            </div>
+          ) : (
+            <EmptyState compact title="No weekly revision yet" message="Weekly revision is created from learning sessions you complete this week." />
+          )}
+
+          <p className="queue-label">This week’s completed topics</p>
+          {data.topics.length ? (
+            data.topics.map((s) => (
+              <div key={s.subjectId} className="muted-box">
+                <strong style={{ fontSize: 12.5 }}>{s.subjectName}</strong>
+                {s.chapters.map((c) => (
+                  <div key={c.chapterId} style={{ marginTop: 4, fontSize: 12 }}>
+                    <span className="text-secondary">{c.chapterName}: </span>
+                    {c.topics.map((t) => t.topicName).join(', ')}
+                  </div>
+                ))}
+              </div>
+            ))
+          ) : (
+            <p className="text-tertiary" style={{ fontSize: 12 }}>
+              No learning completed this week yet.
+            </p>
+          )}
+        </div>
+
+        <div className="stack" style={{ gap: 8 }}>
+          <p className="queue-label">
+            Mistake Bank ({data.mistakes.unresolvedMockMistakes.length} mock-test · {data.mistakes.unresolvedBankCount} bank unresolved)
+          </p>
+          {data.mistakes.unresolvedMockMistakes.length || data.mistakes.weekBankMistakes.length ? (
+            <ul className="practice-list">
+              {data.mistakes.weekBankMistakes.map((m) => (
+                <li key={m.id}>
+                  {m.question} <span className="text-tertiary">· Mistake Bank (this week)</span>
+                </li>
+              ))}
+              {data.mistakes.unresolvedMockMistakes.slice(0, 10).map((m) => (
+                <li key={m.id}>
+                  {m.question}{' '}
+                  <span className="text-tertiary">
+                    · {m.topicName ?? m.subjectName ?? 'Mock test'}
+                    {m.inThisWeek ? ' · this week' : ''}
+                    {m.occurrences > 1 ? ` · ${m.occurrences}×` : ''}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-tertiary" style={{ fontSize: 12 }}>
+              No unresolved mistakes.
+            </p>
+          )}
+
+          <p className="queue-label">Weak topics to revise</p>
+          {data.weakTopics.length ? (
+            <ul className="practice-list">
+              {data.weakTopics.map((t) => (
+                <li key={t.topicId}>
+                  {t.topicName} <span className="text-tertiary">· {t.chapterName}</span>
+                  {t.accuracy !== null ? <span className="text-danger"> · {t.accuracy}%</span> : null}
+                  {t.mistakeCount ? <span className="text-tertiary"> · {t.mistakeCount} mistakes</span> : null}
+                  {t.inThisWeek ? <Badge size="sm" tone="info"> this week</Badge> : null}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-tertiary" style={{ fontSize: 12 }}>
+              No weak topics detected.
+            </p>
+          )}
+          {sm.revisionAccuracy !== null ? <p className="stat__hint">Revision practice accuracy this week: {sm.revisionAccuracy}%</p> : null}
+        </div>
+      </div>
+      <RevisionWorkspace obligationId={openId} onClose={() => setOpenId(null)} />
+    </Card>
   )
 }
 

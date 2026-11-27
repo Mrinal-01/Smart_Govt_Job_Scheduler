@@ -55,6 +55,14 @@ const schema = z.object({
   AI_MAX_OUTPUT_TOKENS: int(8000, 256, 16000),
   AI_EFFORT: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('medium'),
 
+  /* Phone + OTP authentication */
+  PHONE_ALLOWED_COUNTRY_CODES: z.string().default('91'),
+  OTP_SECRET: z.string().optional(),
+  SMS_DRIVER: z.enum(['console', 'twilio', 'disabled']).default('console'),
+  TWILIO_ACCOUNT_SID: z.string().optional(),
+  TWILIO_AUTH_TOKEN: z.string().optional(),
+  TWILIO_FROM: z.string().optional(),
+
   SCHEDULE_MAX_CHANGES: int(3, 0, 100),
   SCHEDULE_WINDOW_DAYS: int(7, 1, 90)
 })
@@ -88,6 +96,10 @@ export const env = {
   corsOrigins: raw.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean),
   jwtSecret: secret('JWT_ACCESS_SECRET', raw.JWT_ACCESS_SECRET),
   fileSigningSecret: secret('FILE_SIGNING_SECRET', raw.FILE_SIGNING_SECRET),
+  otpSecret: secret('OTP_SECRET', raw.OTP_SECRET),
+  phoneCountryCodes: raw.PHONE_ALLOWED_COUNTRY_CODES.split(',')
+    .map((s) => s.trim().replace(/^\+/, ''))
+    .filter((s) => /^[1-9]\d{0,2}$/.test(s)),
   cookieSecure: raw.COOKIE_SECURE === undefined ? raw.NODE_ENV === 'production' : raw.COOKIE_SECURE === 'true',
   storageDir: path.resolve(raw.STORAGE_DIR),
   maxUploadBytes: raw.MAX_UPLOAD_MB * 1024 * 1024,

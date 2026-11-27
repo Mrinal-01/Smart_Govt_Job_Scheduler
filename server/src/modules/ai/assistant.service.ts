@@ -6,16 +6,12 @@ import { conflict, notFound, unprocessable } from '../../lib/errors.js'
 import { getAIProvider } from '../../integrations/ai.js'
 import { ExamMistake, MockTestAttempt, Question, StudyWorkspace } from '../../models/index.js'
 import { loadCurriculum } from '../workspace/curriculum.service.js'
-import { performanceSummary } from '../exams/attempt.service.js'
-import { getHistory } from '../cycles/cycle.service.js'
 import { getSettings } from '../settings/settings.service.js'
 import { normalizeForHash } from '../documents/extraction/questionParser.js'
 import { aiUsageToday, runAI } from './ai.usage.js'
 
 type Oid = Types.ObjectId
 
-export const ANALYSIS_MODES = ['weak_subjects', 'weak_chapters', 'revision_priorities', 'weekly_summary', 'plan_suggestions', 'chat'] as const
-export type AnalysisMode = (typeof ANALYSIS_MODES)[number]
 
 const BASE_SYSTEM = `You are StudyOS's study coach for a student preparing for Indian competitive government exams.
 Ground rules:
@@ -36,102 +32,6 @@ interface WorkspaceTopic {
   questionsCorrect?: number
   confidence?: number
   mistakeCount?: number
-}
-
-/** Compact, factual snapshot of the authenticated student's data. */
-export async function buildStudentContext(userId: Oid) {
-  const today = dateKey()
-  const ws = await StudyWorkspace.findOne({ userId }).lean()
-  const data = (ws?.data ?? {}) as Record<string, unknown>
-  const subjects = (data.subjects as Array<{ id: string; name: string }>) ?? []
-  const chapters = (data.chapters as Array<{ id: string; name: string; subjectId: string; topics: WorkspaceTopic[] }>) ?? []
-  const logs = ((data.logs as Array<{ date: string; plannedMinutes: number; actualMinutes: number; sessionsPlanned: number; sessionsCompleted: number; revisionsCompleted: number; seed?: boolean }>) ?? []).filter(
-    (l) => l.date >= addDays(today, -6) && l.date <= today
-  )
-  const topics = chapters.flatMap((c) => c.topics.map((t) => ({ ...t, chapterName: c.name })))
-  const subjectFacts = subjects.map((s) => {
-    const st = topics.filter((t) => t.subjectId === s.id)
-    const attempted = st.reduce((a, t) => a + (t.questionsAttempted ?? 0), 0)
-    const correct = st.reduce((a, t) => a + (t.questionsCorrect ?? 0), 0)
-    return {
-      subject: s.name,
-      topicsTotal: st.length,
-      topicsLearned: st.filter((t) => t.initialLearningDate).length,
-      practiceAccuracyPct: attempted ? Math.round((correct / attempted) * 100) : null,
-      practiceQuestions: attempted,
-      revisionsLogged: st.reduce((a, t) => a + (t.revisions?.length ?? 0), 0),
-      revisionsDueNow: st.filter((t) => t.nextRevisionDue && t.nextRevisionDue <= today).length
-    }
-  })
-  const weakTopics = topics
-    .filter((t) => t.initialLearningDate && (t.questionsAttempted ?? 0) >= 5)
-    .map((t) => ({
-      topic: t.name,
-      chapter: t.chapterName,
-      subject: subjects.find((s) => s.id === t.subjectId)?.name,
-      accuracyPct: Math.round(((t.questionsCorrect ?? 0) / Math.max(1, t.questionsAttempted ?? 0)) * 100),
-      mistakes: t.mistakeCount ?? 0,
-      confidence: t.confidence ?? null,
-      nextRevisionDue: t.nextRevisionDue ?? null
-    }))
-    .sort((a, b) => a.accuracyPct - b.accuracyPct)
-    .slice(0, 12)
-  const overdue = topics
-    .filter((t) => t.nextRevisionDue && t.nextRevisionDue <= today)
-    .sort((a, b) => (a.nextRevisionDue! < b.nextRevisionDue! ? -1 : 1))
-    .slice(0, 15)
-    .map((t) => ({ topic: t.name, chapter: t.chapterName, dueSince: t.nextRevisionDue, revisionsSoFar: t.revisions?.length ?? 0 }))
-
-  const perf = await performanceSummary(userId)
-  const cycles = await getHistory(userId, 7)
-  const mistakes = await ExamMistake.aggregate([{ $match: { userId, status: { $ne: 'resolved' } } }, { $group: { _id: '$subjectName', n: { $sum: 1 } } }])
-  const profile = (data.profile ?? {}) as { targetExam?: string; examDate?: string | null }
-  const settings = (data.settings ?? {}) as { dailyTargetMinutes?: number; weeklyTargetMinutes?: number }
-
-  return {
-    today,
-    targetExam: profile.targetExam ?? null,
-    examDate: profile.examDate ?? null,
-    dailyTargetMinutes: settings.dailyTargetMinutes ?? null,
-    weeklyTargetMinutes: settings.weeklyTargetMinutes ?? null,
-    subjects: subjectFacts,
-    weakestPracticedTopics: weakTopics,
-    overdueRevisions: overdue,
-    last7Days: logs.map((l) => ({
-      date: l.date,
-      plannedMinutes: l.plannedMinutes,
-      actualMinutes: l.actualMinutes,
-      sessionsCompleted: `${l.sessionsCompleted}/${l.sessionsPlanned}`,
-      revisions: l.revisionsCompleted,
-      generatedDemoData: Boolean(l.seed)
-    })),
-    studyCyclesLast7Days: cycles.map((c) => ({ date: c.date, cycle: c.cycleNumber, status: c.status, revisionTopicsDone: `${c.topicsCompleted}/${c.topicsDue}` })),
-    mockTests: { finishedAttempts: perf.attempts, subjects: perf.subjects, weakChapters: perf.weakChapters },
-    unresolvedExamMistakesBySubject: Object.fromEntries(mistakes.map((m) => [m._id ?? 'Unassigned', m.n]))
-  }
-}
-
-const MODE_PROMPTS: Record<AnalysisMode, string> = {
-  weak_subjects: 'Identify my weakest subjects and explain why, citing the numbers. Then give 3 concrete actions per weak subject.',
-  weak_chapters: 'Identify my weakest chapters/topics from the data, explain the evidence, and give a short fix plan for each.',
-  revision_priorities: 'Rank what I should revise next (top 8), with the reason for each (overdue days, low accuracy, mistakes). Do not change any schedule.',
-  weekly_summary: 'Summarise my last 7 days: time studied vs planned, consistency, cycles, revisions and test performance. End with 3 priorities for next week.',
-  plan_suggestions: 'Suggest improvements to my study plan (time split per subject, revision load, test frequency) based on the data. Keep them realistic.',
-  chat: ''
-}
-
-export async function analyze(userId: Oid, mode: AnalysisMode, message?: string, history: Array<{ role: 'user' | 'assistant'; content: string }> = []) {
-  if (mode === 'chat' && !message?.trim()) throw unprocessable('Type a question first.', 'MESSAGE_REQUIRED')
-  const context = await buildStudentContext(userId)
-  const ask = mode === 'chat' ? message!.trim() : `${MODE_PROMPTS[mode]}${message?.trim() ? `\nAdditional note from me: ${message.trim()}` : ''}`
-  const { text } = await runAI(userId, `assistant:${mode}`, (p) =>
-    p.generateText({
-      system: `${BASE_SYSTEM}\n\nSTUDENT DATA (JSON, authoritative):\n${JSON.stringify(context)}`,
-      messages: [...history.slice(-8), { role: 'user', content: ask }],
-      maxTokens: 4000
-    })
-  )
-  return { content: text, mode }
 }
 
 export async function explainWrongAnswer(userId: Oid, attemptId: Oid, questionId: string) {

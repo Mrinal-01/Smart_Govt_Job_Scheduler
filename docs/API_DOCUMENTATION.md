@@ -20,21 +20,23 @@ Resources owned by another user return `404 NOT_FOUND`.
 ## Auth (`/auth`)
 | Method | Path | Body / notes |
 |---|---|---|
-| POST | `/register` | `{name, email, password, confirmPassword, acceptTerms: true}` → 201 `{user, verificationRequired}`; 409 `EMAIL_IN_USE` |
-| POST | `/verify-email` | `{token}`; 422 `VERIFY_TOKEN_INVALID` |
-| POST | `/resend-verification` | `{email}` → 202 (same response whether or not the account exists) |
-| POST | `/login` | `{email, password}` → `{accessToken, expiresIn, user}` + cookie; 401 `INVALID_CREDENTIALS`, 403 `EMAIL_NOT_VERIFIED`, 429 `ACCOUNT_LOCKED` |
+| POST | `/otp/request` | `{phone, purpose: signup|login}` → `{phone (E.164), expiresIn: 300, resendIn: 60, devOtp?}` (`devOtp` only in development with `SMS_DRIVER=console`); 400 `VALIDATION_ERROR` (invalid number), 409 `PHONE_IN_USE` (signup, number registered — log in instead), 404 `PHONE_NOT_REGISTERED` (login, unknown number — sign up first), 403 `ACCOUNT_DISABLED`, 429 `OTP_COOLDOWN` (`details.retryAfter` s), 429 `OTP_SEND_LIMIT` (5 codes/number/hour), 503 `SMS_UNAVAILABLE` |
+| POST | `/register` | `{name, phone, otp, acceptTerms: true}` → 201 `{accessToken, expiresIn, user}` + refresh cookie (signed in); 409 `PHONE_IN_USE`; 422 `OTP_INCORRECT` (`details.attemptsLeft`) / `OTP_ATTEMPTS_EXCEEDED` / `OTP_EXPIRED` / `OTP_INVALID` |
+| POST | `/login` | `{phone, otp}` → `{accessToken, expiresIn, user}` + cookie; 404 `PHONE_NOT_REGISTERED`, 403 `ACCOUNT_DISABLED`, 422 OTP errors as above |
 | POST | `/refresh` | cookie + CSRF header → new access token, rotated cookie; 401 `REFRESH_REUSED` (family revoked), 409 `REFRESH_RACE` (retry) |
 | POST | `/logout` | cookie + CSRF header → 204, family revoked |
 | POST | `/logout-all` | bearer → 204; all sessions revoked, all access tokens invalid |
 | GET/PATCH | `/me` | current user / `{name}` |
-| POST | `/forgot-password` | `{email}` → 202 generic |
-| POST | `/reset-password` | `{token, password, confirmPassword}`; signs out all devices |
-| POST | `/change-password` | `{currentPassword, newPassword, confirmPassword}` → new access token; other sessions revoked |
+| POST | `/change-password` | legacy email accounts that still have a password only; 422 `NO_PASSWORD` otherwise |
 | GET | `/sessions` | active devices `[{id, userAgent, ip, createdAt, lastUsedAt, current}]` |
 | DELETE | `/sessions/:id` | sign out one device |
 
-Rate limits: credential endpoints 10/15 min/IP, email endpoints 5/h/IP, refresh 600/15 min, API 600/5 min.
+Validation: `phone` accepts `9876543210`, `+91 98765-43210`, `919876543210`, `09876543210` and is stored as E.164 (`+919876543210`); only `PHONE_ALLOWED_COUNTRY_CODES` (default `91`) are allowed and Indian numbers must be 10 digits starting 6–9. `name` 2–80 chars, letters/spaces/`.'-`. `otp` exactly 6 digits.
+`user` = `{id, name, phone, phoneVerified, email|null, emailVerified, hasPassword, role, createdAt}`.
+
+Rate limits: register/login 10/15 min/IP, OTP requests 20/h/IP plus 5/h and a 60 s cooldown per number, refresh 600/15 min, API 600/5 min (×10 in development). Email verification and password-reset endpoints were removed with phone sign-in.
+
+Development only: `GET /dev/sms` lists the codes the console SMS driver "sent" (alongside `GET /dev/mailbox`).
 
 ## Workspace (`/workspace`)
 | Method | Path | Notes |
@@ -44,7 +46,7 @@ Rate limits: credential endpoints 10/15 min/IP, email endpoints 5/h/IP, refresh 
 | PUT | `/` | `{baseRevision, data}` → `{revision}`; 409 `WORKSPACE_CONFLICT` (`details.currentRevision`) |
 
 ## Settings (`/settings`)
-GET → `{settings}`; PATCH `{timezone?, cycle?: {subjectIds, defaultRevisionMinutes, revisionMinutesBySubject, revisionMinutesPerTopic, maxTopicsPerRevisionBlock, revisionMandatory}, ai?: {enabled}, exams?: {autoAddMistakes}}`.
+GET → `{settings}`; PATCH `{timezone?, cycle?: {subjectIds, defaultRevisionMinutes, revisionMinutesBySubject, revisionMinutesPerTopic, maxTopicsPerRevisionBlock, revisionMandatory, cyclesPerDay, sessionMinutes, breakMinutes}, plan?: {sameDayRevisionMinutes, nextDayRevisionEnabled, nextDayRevisionMinutes, weeklyRevisionMinutes, weeklyReviewWeekday, restWeekdays, holidays, requirePracticeInRevision}, ai?: {enabled}, exams?: {autoAddMistakes}}`.
 
 ## Schedule (`/schedule`)
 | Method | Path | Notes |
@@ -53,25 +55,35 @@ GET → `{settings}`; PATCH `{timezone?, cycle?: {subjectIds, defaultRevisionMin
 | GET | `/versions` | history (newest first) |
 | GET | `/versions/:version` | one version with slots |
 | GET | `/effective?date=YYYY-MM-DD` | version governing that date |
-| POST | `/preview` | `{slots}` → `{isBaseline, diff, usage}` (no write) |
-| POST | `/publish` | `{slots, changeReason, effectiveFrom?, override?, overrideReason?}` → 201 `{version, usage}`; 422 `NO_CHANGES` / `INVALID_EFFECTIVE_DATE` / `OVERRIDE_REASON_REQUIRED` / `UNKNOWN_SUBJECT`; 429 `SCHEDULE_CHANGE_LIMIT` (`details.nextAvailableAt`) |
+| POST | `/preview` | `{slots}` → `{isBaseline, diff, validation{errors, warnings}, carryOver, usage}` (no write) |
+| POST | `/publish` | `{slots, changeReason, effectiveFrom?, override?, overrideReason?}` → 201 `{version, usage}`; 422 `INVALID_SCHEDULE_DEPENDENCIES` / `NO_CHANGES` / `INVALID_EFFECTIVE_DATE` / `OVERRIDE_REASON_REQUIRED` / `UNKNOWN_SUBJECT`; 429 `SCHEDULE_CHANGE_LIMIT` (`details.nextAvailableAt`) |
 
-## Study cycles (`/cycles`)
+## Alert sounds (`/sounds`)
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/today` | cycles of today with blocks, tasks, logs, stats; `upcomingRevision`; `carryForward` |
-| GET | `/history?days=14` | per-cycle summaries |
-| GET | `/carry-forward` | `{pendingTasks, partialTopics, unfinishedBlocks}` |
-| POST | `/start` | `{subjectIds?, force?}` → 201 `{cycle}`; 409 `CYCLE_ACTIVE` |
-| GET | `/:id` | cycle detail |
-| POST | `/:id/end` | `{reason?}` |
-| POST | `/blocks/:blockId/start-revision` | 422 `NO_REVISION_DUE` |
-| POST | `/blocks/:blockId/skip-revision` | `{reason}` (≥3 chars) |
-| POST | `/blocks/:blockId/start-learning` | 409 `REVISION_REQUIRED` |
-| POST | `/blocks/:blockId/complete-learning` | `{entries: [{topicId, completion: completed|partial, minutes?, confidence?, notes?}]}` |
-| POST | `/blocks/:blockId/skip` | `{reason}` |
-| POST | `/revision-tasks/:taskId/complete` | `{outcome: recalled|partial|forgot, questionsAttempted?, questionsCorrect?, secondsSpent?}`; 409 `REVISION_NOT_STARTED` / `TASK_RESOLVED` |
-| POST | `/revision-tasks/:taskId/skip` | `{reason}` |
+| GET | `/` | `{sounds[{id, name, format, sizeBytes, createdAt}], limit: 10, maxBytes}` |
+| POST | `/` | multipart `file` (MP3/WAV/OGG/M4A/WebM, ≤2 MB, format checked from the file bytes) + `name` (1–60) → 201 `{sound}`; 409 `SOUND_LIMIT` (max 10), 415 `UNSUPPORTED_FILE`, 413 too large |
+| GET | `/:id/file` | streams the owner's file (404 for anyone else) |
+| DELETE | `/:id` | 204 |
+
+## Study plan (`/plan`) — scheduled sessions, revision gates, weekly review, analytics
+Full contract with request/response bodies and error codes: [STUDY_CYCLE_AND_REVISION_API.md](STUDY_CYCLE_AND_REVISION_API.md).
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/days/:date` (`today`) | sessions with derived state/locks, cycles, carryover, summary |
+| GET | `/days/:date/cycles` | cycle progress |
+| POST | `/days/:date/cycles/:n/complete` | `{reason?}`; 422 `REASON_REQUIRED` |
+| POST | `/cycle-template` | generate cycle slots for a weekday (no write) |
+| GET | `/sessions`, `/sessions/:id`, `/sessions/:id/dependencies`, `/sessions/:id/eligibility` | |
+| POST | `/sessions/:id/start` | 409 `SESSION_LOCKED` (`details.lockReasons`) |
+| POST | `/sessions/:id/complete` | `{topics[{topicId, completion}], questionsAttempted?, questionsCorrect?, confidence?, notes?, actualMinutes?}`; 409 `SESSION_NOT_STARTED`; idempotent |
+| POST | `/sessions/:id/skip` | `{reason}` — never bypasses revision |
+| POST | `/sessions/:id/override` | `{reason ≥10}` → 201; revision stays pending |
+| POST | `/sessions/:id/reschedule` | `{startTime, endTime}` today only |
+| GET | `/revisions`, `/revisions/overdue`, `/revisions/carryover`, `/revisions/history`, `/revisions/:id`, `/revisions/:id/preparation` | |
+| POST | `/revisions/:id/start`, `/revisions/:id/complete` | 422 `REVISION_INCOMPLETE`; idempotent |
+| GET | `/weekly`, `/weekly/progress`, `/overrides`, `/analytics` | |
 
 ## Documents & files
 | Method | Path | Notes |
@@ -126,7 +138,6 @@ GET (`status?`, `subjectId?`), PATCH `/:id` `{status?, category?}`, POST `/:id/r
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/status` | configured, model, per-user switch, usage today |
-| POST | `/analyze` | `{mode: weak_subjects|weak_chapters|revision_priorities|weekly_summary|plan_suggestions|chat, message?, history?}` |
 | POST | `/explain-answer` | `{attemptId, questionId}` (finished attempts only) |
 | POST | `/explain-topic` | `{topicId, focus?}` |
 | POST | `/practice-questions` | `{topicId, count 1–10, difficulty}` → saved as `ai_generated`, `needs_review` |

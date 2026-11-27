@@ -1,6 +1,7 @@
 import { env } from '../../config/env.js'
 import { getAIProvider } from '../../integrations/ai.js'
 import { mailDriverName } from '../../integrations/mail.js'
+import { smsDriverName } from '../../integrations/sms.js'
 import { getOcrProvider } from '../documents/extraction/ocr.js'
 import { policy } from '../schedule/schedule.service.js'
 
@@ -11,7 +12,8 @@ export async function describeIntegrations() {
     ai: { configured: Boolean(getAIProvider()), provider: getAIProvider()?.name ?? null, model: getAIProvider()?.model ?? null },
     ocr: { provider: ocr.name, available: await ocr.available() },
     mail: { driver: mailDriverName(), delivers: mailDriverName() === 'resend' },
-    requireEmailVerification: env.REQUIRE_EMAIL_VERIFICATION,
+    sms: { driver: smsDriverName(), delivers: smsDriverName() === 'twilio' },
+    phoneCountryCodes: env.phoneCountryCodes,
     maxUploadMb: env.MAX_UPLOAD_MB,
     maxPdfPages: env.MAX_PDF_PAGES,
     schedulePolicy: policy(),

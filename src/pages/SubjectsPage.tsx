@@ -316,7 +316,7 @@ function SubjectDetail({ subject, onBack }: { subject: Subject; onBack: () => vo
           <Button variant="secondary" icon={<Plus size={14} />} onClick={() => { setChapterModal({}); setChapterName(''); setWeightage('5'); setModalError('') }}>
             Add chapter
           </Button>
-          <Button variant="primary" icon={<Target size={14} />} onClick={() => navigate('/mock-tests')}>
+          <Button variant="primary" icon={<Target size={14} />} onClick={() => navigate('/tests')}>
             Take a test
           </Button>
         </div>

@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
+import { isDateKey } from '../../lib/dates.js'
 import { asyncHandler } from '../../lib/errors.js'
 import { parse } from '../../lib/validate.js'
 import { authOf, requireAuth } from '../../middleware/auth.js'
@@ -26,7 +27,23 @@ const patchSchema = z.object({
       revisionMinutesBySubject: z.record(z.string().max(120), z.number().int().min(0).max(180)).optional(),
       revisionMinutesPerTopic: z.number().int().min(1).max(60).optional(),
       maxTopicsPerRevisionBlock: z.number().int().min(1).max(50).optional(),
-      revisionMandatory: z.boolean().optional()
+      revisionMandatory: z.boolean().optional(),
+      cyclesPerDay: z.number().int().min(1).max(8).optional(),
+      sessionMinutes: z.number().int().min(10).max(300).optional(),
+      breakMinutes: z.number().int().min(0).max(120).optional()
+    })
+    .optional(),
+  plan: z
+    .object({
+      sameDayRevisionMinutes: z.number().int().min(1).max(180).optional(),
+      nextDayRevisionEnabled: z.boolean().optional(),
+      nextDayRevisionMinutes: z.number().int().min(1).max(180).optional(),
+      carryoverScope: z.enum(['per_subject', 'all_subjects']).optional(),
+      weeklyRevisionMinutes: z.number().int().min(1).max(300).optional(),
+      weeklyReviewWeekday: z.number().int().min(0).max(6).optional(),
+      restWeekdays: z.array(z.number().int().min(0).max(6)).max(6).optional(),
+      holidays: z.array(z.string().refine(isDateKey, 'Invalid date')).max(366).optional(),
+      requirePracticeInRevision: z.boolean().optional()
     })
     .optional(),
   ai: z.object({ enabled: z.boolean().optional() }).optional(),

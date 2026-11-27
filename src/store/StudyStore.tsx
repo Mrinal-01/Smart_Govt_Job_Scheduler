@@ -69,6 +69,7 @@ interface StudyContextValue {
 
   /* schedule */
   addSlot: (input: Omit<ScheduleSlot, 'id' | 'order' | 'sessionNumber'> & { sessionNumber?: number }) => void
+  duplicateSlot: (id: ID) => void
   updateSlot: (id: ID, patch: Partial<ScheduleSlot>) => void
   deleteSlot: (id: ID) => void
   moveSlot: (id: ID, dir: -1 | 1) => void
@@ -77,7 +78,7 @@ interface StudyContextValue {
 
   /* sessions */
   ensureToday: () => void
-  startSession: (key: string) => SessionActionResult
+  startSession: (key: string, opts?: { gateCleared?: boolean }) => SessionActionResult
   pauseSession: (key: string) => void
   resumeSession: (key: string) => void
   toggleRevisionItem: (key: string, itemId: string) => void
@@ -147,7 +148,28 @@ const slotKey = (slots: ScheduleSlot[]) =>
   JSON.stringify(
     [...slots]
       .sort((a, b) => a.id.localeCompare(b.id))
-      .map((s) => [s.id, s.weekday, s.subjectId, s.label, s.startTime, s.endTime, s.requiresRevision, s.learningTarget, s.practiceTarget, s.reminderEnabled, s.breakAfterMinutes, s.order, s.sessionNumber])
+      .map((s) => [
+        s.id,
+        s.weekday,
+        s.subjectId,
+        s.label,
+        s.startTime,
+        s.endTime,
+        s.requiresRevision,
+        s.learningTarget,
+        s.practiceTarget,
+        s.reminderEnabled,
+        s.breakAfterMinutes,
+        s.order,
+        s.sessionNumber,
+        s.sessionType ?? 'learning',
+        s.cycleNumber ?? null,
+        s.chapterId ?? null,
+        s.topicIds ?? [],
+        s.revisionMinutes ?? null,
+        s.revisionPolicy ?? null,
+        s.prerequisiteSlotIds ?? []
+      ])
   )
 
 export const sameSlots = (a: ScheduleSlot[], b: ScheduleSlot[]) => slotKey(a) === slotKey(b)
@@ -503,7 +525,33 @@ export function StudyProvider({
 
   const deleteSlot = useCallback(
     (id: ID) => {
-      editDraft((draft) => draft.filter((s) => s.id !== id))
+      // Dependencies on the removed session are dropped with it.
+      editDraft((draft) =>
+        draft
+          .filter((s) => s.id !== id)
+          .map((s) => (s.prerequisiteSlotIds?.includes(id) ? { ...s, prerequisiteSlotIds: s.prerequisiteSlotIds.filter((x) => x !== id) } : s))
+      )
+    },
+    [editDraft]
+  )
+
+  /** Copies a session to the same day; its cycle number is re-derived and dependencies are not copied. */
+  const duplicateSlot = useCallback(
+    (id: ID) => {
+      editDraft((draft) => {
+        const slot = draft.find((s) => s.id === id)
+        if (!slot) return draft
+        const sameSubject = draft.filter((s) => s.weekday === slot.weekday && s.subjectId === slot.subjectId)
+        const copy: ScheduleSlot = {
+          ...slot,
+          id: uid('slot'),
+          order: slot.order + 1,
+          sessionNumber: sameSubject.length + 1,
+          cycleNumber: null,
+          prerequisiteSlotIds: []
+        }
+        return [...draft.map((s) => (s.weekday === slot.weekday && s.order > slot.order ? { ...s, order: s.order + 1 } : s)), copy]
+      })
     },
     [editDraft]
   )
@@ -534,7 +582,18 @@ export function StudyProvider({
         to.forEach((weekday) => {
           if (weekday === from) return
           schedule = schedule.filter((s) => s.weekday !== weekday)
-          schedule = [...schedule, ...source.map((s, index) => ({ ...s, id: uid('slot'), weekday, order: index }))]
+          // New ids per copy; prerequisites are re-pointed to the copied sessions of the same day.
+          const ids = new Map(source.map((s) => [s.id, uid('slot')]))
+          schedule = [
+            ...schedule,
+            ...source.map((s, index) => ({
+              ...s,
+              id: ids.get(s.id)!,
+              weekday,
+              order: index,
+              prerequisiteSlotIds: (s.prerequisiteSlotIds ?? []).map((p) => ids.get(p)).filter((p): p is string => Boolean(p))
+            }))
+          ]
         })
         return schedule.sort((a, b) => a.weekday - b.weekday || a.order - b.order)
       })
@@ -591,9 +650,14 @@ export function StudyProvider({
     })
   }, [])
 
-  const startSession = useCallback((key: string): SessionActionResult => {
+  /**
+   * Starts the local timer. `gateCleared` means the server already validated every revision
+   * prerequisite (modules/plan), so the legacy client-side revision checklist is not re-applied.
+   */
+  const startSession = useCallback((key: string, opts?: { gateCleared?: boolean }): SessionActionResult => {
     const current = stateRef.current
     const record = current.sessions[key]
+    const cleared = Boolean(opts?.gateCleared)
     if (!record) return { needsRevision: false, topic: null }
     const slot = current.schedule.find((s) => s.id === record.slotId)
     const now = new Date()
@@ -610,16 +674,17 @@ export function StudyProvider({
       if (!rec) return prev
       const alreadyStarted = Boolean(rec.startedAt)
       const lateStart = Math.max(0, nowMin - startMin)
+      const gated = !cleared && slot?.requiresRevision && !rec.revisionMarked
       const next: SessionRecord = {
         ...rec,
-        status: slot?.requiresRevision && !rec.revisionMarked ? 'revision-pending' : 'in-progress',
+        status: gated ? 'revision-pending' : 'in-progress',
         startedAt: rec.startedAt ?? now.toISOString(),
-        runningSince: slot?.requiresRevision && !rec.revisionMarked ? null : Date.now(),
+        runningSince: gated ? null : Date.now(),
         accumulatedSeconds: alreadyStarted ? rec.accumulatedSeconds : lateStart * 60
       }
       return { ...prev, sessions: { ...prev.sessions, [key]: next } }
     })
-    return { needsRevision: Boolean(slot?.requiresRevision) && !record.revisionMarked, topic }
+    return { needsRevision: !cleared && Boolean(slot?.requiresRevision) && !record.revisionMarked, topic }
   }, [])
 
   const pauseSession = useCallback(
@@ -1043,6 +1108,7 @@ export function StudyProvider({
       updateTopic,
       deleteTopic,
       addSlot,
+      duplicateSlot,
       updateSlot,
       deleteSlot,
       moveSlot,
@@ -1097,6 +1163,7 @@ export function StudyProvider({
       updateTopic,
       deleteTopic,
       addSlot,
+      duplicateSlot,
       updateSlot,
       deleteSlot,
       moveSlot,

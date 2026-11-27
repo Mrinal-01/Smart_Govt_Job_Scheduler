@@ -120,25 +120,36 @@ function buildRevisionHistory(
 }
 
 /* ------------------------------------------------------------------ */
-/* Weekly schedule — multiple sessions per subject, Mon–Sat            */
+/* Weekly schedule — study cycles, Mon–Sat                             */
+/*                                                                     */
+/* Cycle 1 runs every subject once; cycle 2 runs every subject again.  */
+/* Each session is preceded by a 15-minute gap that the server fills   */
+/* with that subject's revision block when one is due:                 */
+/*   • cycle 1 → revision of the subject's previous-day topics         */
+/*   • cycle 2 → revision of the subject's cycle-1 topics (same day)   */
+/* On the very first day nothing has been learnt yet, so cycle 1 has   */
+/* no revision at all.                                                 */
 /* ------------------------------------------------------------------ */
 
+type SubjectKey = 'math' | 'science' | 'reasoning' | 'current'
+
 const WEEK_SESSIONS: Array<{
-  subjectKey: 'math' | 'science' | 'reasoning' | 'current'
+  subjectKey: SubjectKey
+  cycle: 1 | 2
   label: string
   start: string
   end: string
   learning: string
   practice: number
 }> = [
-  { subjectKey: 'math', label: 'Morning Learning Session', start: '06:00', end: '07:30', learning: 'New chapter concept build-up + 20 solved examples', practice: 15 },
-  { subjectKey: 'science', label: 'Learning Session', start: '08:00', end: '09:30', learning: 'Theory reading + formula notebook update', practice: 12 },
-  { subjectKey: 'reasoning', label: 'Learning Session', start: '10:00', end: '11:15', learning: 'Concept + 2 practice sets', practice: 20 },
-  { subjectKey: 'science', label: 'Second Session', start: '12:00', end: '13:00', learning: 'Numericals / PYQ set of the previous chapter', practice: 15 },
-  { subjectKey: 'current', label: 'Learning Session', start: '14:00', end: '15:00', learning: 'Daily current affairs digest + notes', practice: 10 },
-  { subjectKey: 'math', label: 'Second Session', start: '16:00', end: '17:15', learning: 'Practice set on the day’s topic', practice: 25 },
-  { subjectKey: 'reasoning', label: 'Second Session', start: '17:30', end: '18:30', learning: 'Timed puzzle practice', practice: 20 },
-  { subjectKey: 'current', label: 'Second Session', start: '19:30', end: '20:15', learning: 'Revision of week’s current affairs + quiz', practice: 15 }
+  { subjectKey: 'math', cycle: 1, label: 'Cycle 1 · Learning', start: '06:15', end: '07:30', learning: 'New chapter concept build-up + 20 solved examples', practice: 15 },
+  { subjectKey: 'science', cycle: 1, label: 'Cycle 1 · Learning', start: '07:45', end: '09:00', learning: 'Theory reading + formula notebook update', practice: 12 },
+  { subjectKey: 'reasoning', cycle: 1, label: 'Cycle 1 · Learning', start: '09:15', end: '10:30', learning: 'Concept + 2 practice sets', practice: 20 },
+  { subjectKey: 'current', cycle: 1, label: 'Cycle 1 · Learning', start: '10:45', end: '11:30', learning: 'Daily current affairs digest + notes', practice: 10 },
+  { subjectKey: 'math', cycle: 2, label: 'Cycle 2 · Learning', start: '14:15', end: '15:15', learning: 'Next topic + practice set', practice: 25 },
+  { subjectKey: 'science', cycle: 2, label: 'Cycle 2 · Learning', start: '15:30', end: '16:30', learning: 'Next topic + numericals / PYQ set', practice: 15 },
+  { subjectKey: 'reasoning', cycle: 2, label: 'Cycle 2 · Learning', start: '16:45', end: '17:45', learning: 'Next topic + timed puzzle practice', practice: 20 },
+  { subjectKey: 'current', cycle: 2, label: 'Cycle 2 · Learning', start: '18:00', end: '18:45', learning: 'Static GK / more current affairs + quiz', practice: 15 }
 ]
 
 const SUNDAY_SESSIONS = [
@@ -151,10 +162,10 @@ const SUNDAY_SESSIONS = [
 
 function buildSchedule(): ScheduleSlot[] {
   const slots: ScheduleSlot[] = []
-  const sessionCounter: Record<string, number> = {}
 
   for (let weekday = 0; weekday <= 6; weekday += 1) {
     if (weekday === 0) {
+      // Sunday: weekly revision + mock test. These are not learning sessions, so they are never gated.
       SUNDAY_SESSIONS.forEach((s, index) => {
         const duration = minutesFromTime(s.end) - minutesFromTime(s.start)
         slots.push({
@@ -166,36 +177,50 @@ function buildSchedule(): ScheduleSlot[] {
           startTime: s.start,
           endTime: s.end,
           durationMinutes: duration,
-          requiresRevision: Boolean(s.revision),
+          requiresRevision: false,
           learningTarget: s.learning,
           practiceTarget: s.practice,
           reminderEnabled: true,
           breakAfterMinutes: index === 4 ? 0 : 15,
-          order: index
+          order: index,
+          sessionType: s.revision ? 'revision' : 'mock_test',
+          cycleNumber: null,
+          chapterId: null,
+          topicIds: [],
+          revisionMinutes: null,
+          revisionPolicy: 'none',
+          prerequisiteSlotIds: []
         })
       })
       continue
     }
 
     WEEK_SESSIONS.forEach((s, index) => {
-      const key = `${weekday}_${s.subjectKey}`
-      sessionCounter[key] = (sessionCounter[key] ?? 0) + 1
       const duration = minutesFromTime(s.end) - minutesFromTime(s.start)
       slots.push({
         id: `slot_${weekday}_${index}`,
         weekday: weekday as Weekday,
         subjectId: subjectIdFor(s.subjectKey),
-        sessionNumber: sessionCounter[key],
+        sessionNumber: s.cycle,
         label: s.label,
         startTime: s.start,
         endTime: s.end,
         durationMinutes: duration,
-        requiresRevision: true,
+        requiresRevision: s.cycle > 1,
         learningTarget: s.learning,
         practiceTarget: s.practice,
         reminderEnabled: true,
-        breakAfterMinutes: 20,
-        order: index
+        breakAfterMinutes: 15,
+        order: index,
+        sessionType: 'learning',
+        cycleNumber: s.cycle,
+        chapterId: null,
+        topicIds: [],
+        revisionMinutes: 15,
+        // Cycle 1 has no same-day revision (it only waits for the subject's previous-day carryover);
+        // cycle 2 revises what that subject covered in cycle 1.
+        revisionPolicy: s.cycle > 1 ? 'previous_cycle' : 'none',
+        prerequisiteSlotIds: []
       })
     })
   }

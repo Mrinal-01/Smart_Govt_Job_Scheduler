@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
-  Filter,
   History,
   NotebookPen,
   RotateCcw,
@@ -41,6 +40,8 @@ import {
 } from '../store/selectors'
 import { addDays, diffDays, formatShortDate } from '../lib/date'
 import { cx, sum } from '../lib/utils'
+import { ObligationCard, RevisionWorkspace } from '../components/revision'
+import { planApi, usePlanResource, type ObligationType } from '../lib/plan'
 
 type TabKey = 'due' | 'upcoming' | 'history' | 'all'
 
@@ -96,15 +97,6 @@ export default function RevisionPage() {
   )
 
   /* per-type counts keep the four revision categories visibly separate */
-  const typeCounts = useMemo(() => {
-    const counts: Record<string, number> = { 'same-day': 0, 'next-day': 0, weekly: 0, monthly: 0 }
-    allTopics(state).forEach((t) => {
-      t.revisions.forEach((r) => {
-        if (counts[r.type] !== undefined) counts[r.type] += 1
-      })
-    })
-    return counts
-  }, [state])
 
   const startReview = (topic: Topic) => {
     setActive(topic)
@@ -122,12 +114,11 @@ export default function RevisionPage() {
         <div className="page-head__text">
           <h1>Revision Center</h1>
           <p className="page-head__sub">
-            Spaced repetition across 1 · 3 · 7 · 15 · 30 days. Same-day, next-day, weekly and monthly revisions are tracked as separate categories, and
-            initial learning is never counted as revision.
+            Everything you need to revise: first your schedule’s required revisions, then topics due on the 1 · 3 · 7 · 15 · 30-day plan.
           </p>
         </div>
         <div className="page-head__actions">
-          <Button variant="secondary" icon={<Target size={14} />} onClick={() => navigate('/mock-tests')}>
+          <Button variant="secondary" icon={<Target size={14} />} onClick={() => navigate('/tests')}>
             Test weak areas
           </Button>
           <Button variant="primary" icon={<Sparkles size={14} />} onClick={() => navigate('/sunday')}>
@@ -172,7 +163,14 @@ export default function RevisionPage() {
         </Card>
       </div>
 
+      <RevisionObligationsCard />
+
       <Card className="section">
+        <CardHeader
+          title="Spaced revision (topic intervals)"
+          subtitle="Workspace topic history on 1 · 3 · 7 · 15 · 30 day intervals — separate from the server-enforced revision obligations above."
+          icon={<RotateCcw size={15} />}
+        />
         <div className="row row--between row--wrap" style={{ gap: 10, marginBottom: 12 }}>
           <Tabs
             value={tab}
@@ -387,35 +385,6 @@ export default function RevisionPage() {
         ) : null}
       </Card>
 
-      <Card>
-        <CardHeader
-          title="Revision categories"
-          subtitle="Tracked independently so analytics never conflate first learning with revision"
-          icon={<Filter size={15} />}
-        />
-        <div className="grid grid--4" style={{ gap: 10 }}>
-          {(['same-day', 'next-day', 'weekly', 'monthly'] as const).map((k) => (
-            <div key={k} className="muted-box">
-              <Badge tone={REVISION_TYPE_META[k].tone} size="sm">
-                {REVISION_TYPE_META[k].label}
-              </Badge>
-              <p className="mono" style={{ fontSize: 19, fontWeight: 650, marginTop: 6, letterSpacing: '-0.03em' }}>
-                {typeCounts[k]}
-              </p>
-              <p className="stat__hint">
-                {k === 'same-day'
-                  ? 'Same session consolidation'
-                  : k === 'next-day'
-                    ? 'Day-after retention check'
-                    : k === 'weekly'
-                      ? 'Weekly or Sunday review'
-                      : 'Monthly long-term retention'}
-              </p>
-            </div>
-          ))}
-        </div>
-      </Card>
-
       {/* ---------------------------- revision modal ---------------------------- */}
       <Modal
         open={Boolean(active)}
@@ -525,6 +494,70 @@ export default function RevisionPage() {
         ) : null}
       </Modal>
     </main>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Server-tracked revision obligations                                 */
+/* ------------------------------------------------------------------ */
+
+type ObligationFilter = 'open' | 'same_day' | 'next_day' | 'weekly' | 'overdue' | 'completed'
+
+function RevisionObligationsCard() {
+  const [filter, setFilter] = useState<ObligationFilter>('open')
+  const [openId, setOpenId] = useState<string | null>(null)
+  const query = useMemo(() => {
+    if (filter === 'overdue') return { state: 'overdue' as const }
+    if (filter === 'completed') return { state: 'completed' as const }
+    if (filter === 'open') return { state: 'open' as const }
+    return { type: filter as ObligationType, state: 'open' as const }
+  }, [filter])
+  const { data, error, loading } = usePlanResource(() => planApi.revisions(query), [filter])
+  const s = data?.summary
+  const tabs: Array<{ value: ObligationFilter; label: string; count?: number }> = [
+    { value: 'open', label: 'Open', count: s ? s.same_day.open + s.next_day.open + s.weekly.open : undefined },
+    { value: 'same_day', label: 'Same-day', count: s?.same_day.open },
+    { value: 'next_day', label: 'Next-day', count: s?.next_day.open },
+    { value: 'weekly', label: 'Weekly', count: s?.weekly.open },
+    { value: 'overdue', label: 'Overdue', count: s?.overdue },
+    { value: 'completed', label: 'Completed', count: s ? s.same_day.completed + s.next_day.completed + s.weekly.completed : undefined }
+  ]
+  return (
+    <Card className="section">
+      <CardHeader
+        title="Revision obligations"
+        subtitle="Generated by the server from learning you actually completed. Same-day and next-day revisions gate new learning; weekly revision is tracked separately."
+        icon={<CheckCircle2 size={15} />}
+      />
+      <div className="row row--between row--wrap" style={{ gap: 10, marginBottom: 12 }}>
+        <Tabs value={filter} onChange={setFilter} tabs={tabs} />
+      </div>
+      {error ? (
+        <div className="callout callout--danger">
+          <AlertTriangle size={14} />
+          <span>{error}</span>
+        </div>
+      ) : loading && !data ? (
+        <p className="text-tertiary">Loading revision obligations…</p>
+      ) : data && data.obligations.length ? (
+        <div className="rev-list">
+          {data.obligations.map((o) => (
+            <ObligationCard key={o.id} obligation={o} onOpen={(x) => setOpenId(x.id)} />
+          ))}
+        </div>
+      ) : (
+        <EmptyState
+          compact
+          icon={<CheckCircle2 size={18} />}
+          title={filter === 'completed' ? 'No completed revisions yet' : 'Nothing to revise here'}
+          message="Obligations appear automatically when you complete learning sessions from your schedule. Skipped or partial learning never creates one."
+        />
+      )}
+      <p className="field__hint" style={{ marginTop: 10 }}>
+        A completed revision is not the same as a mastered topic — mastery needs repeated revisions and strong accuracy.
+      </p>
+      <RevisionWorkspace obligationId={openId} onClose={() => setOpenId(null)} />
+    </Card>
   )
 }
 

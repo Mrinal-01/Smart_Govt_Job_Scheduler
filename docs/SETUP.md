@@ -23,10 +23,26 @@ cp server/.env.example server/.env   # optional — defaults work for local dev
 npm run dev            # API on :4000 + web on :3000 (Vite proxies /api)
 ```
 
-Open http://localhost:3000, create an account, then open the verification link.
-With the default `MAIL_DRIVER=console` no email is sent: the link is printed in the API log
-and the **“Show recent emails”** button on the verify/forgot-password screens lists it
-(development only).
+Open http://localhost:3000 and sign up with your name and a mobile number (+91, 10 digits),
+then enter the 6-digit code. With the default `SMS_DRIVER=console` no SMS is sent; in
+development the code is:
+
+* shown on the sign-up / login screen (“Development SMS (not sent): your code is …”),
+* printed in the API log (`[dev sms] 123456 is your StudyOS …`), and
+* listed at http://localhost:3000/api/dev/sms.
+
+A number can sign up only once; after that use **Log in** (number → code). Codes expire after
+5 minutes, can be resent after 60 s, at most 5 per number per hour.
+
+To send real SMS set `SMS_DRIVER=twilio` with `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` and
+`TWILIO_FROM` (a Twilio number or sender ID). In production the console driver refuses to send.
+
+Existing email/password accounts (created before phone sign-in) can attach a number and then
+log in with a code:
+
+```bash
+npm --prefix server run user:set-phone -- someone@example.com 9876543210
+```
 
 On first sign-in you choose how to create your workspace:
 
@@ -43,7 +59,7 @@ Run the pieces separately with `npm run dev:api` and `npm run dev:web`.
 ```bash
 npm run seed:master
 ```
-Creates or resets `tester@studyos.local` / `StudyOS-Test-2026`. The email is already verified, and the account has demo data, a published schedule v1 and 36 verified sample questions. Use `samples/sample-question-paper.pdf` to try the PDF upload. Override the login with `MASTER_ACCOUNT_EMAIL` / `MASTER_ACCOUNT_PASSWORD`. The script refuses to run with `NODE_ENV=production` and only touches that one account. It is a normal account: there is deliberately no password that opens every account, because that would be a backdoor.
+Creates or resets the master account with phone **+91 90000 00001** (log in with a one-time code — see above for where the code appears in development). It has demo data, a published schedule v1 and 36 verified sample questions. Use `samples/sample-question-paper.pdf` to try the PDF upload. Override the number with `MASTER_ACCOUNT_PHONE` (the record also keeps `MASTER_ACCOUNT_EMAIL` for reference). The script refuses to run with `NODE_ENV=production` and only touches that one account. It is a normal account: there is deliberately no password that opens every account, because that would be a backdoor.
 
 ## 3. Optional integrations
 
@@ -77,8 +93,9 @@ after restarts. See ARCHITECTURE.md for the swap path.
 ```bash
 npm run check          # typecheck web + API, then build both
 ```
-The automated test suites were removed at the project owner's request. Verify features by
-signing in with the master account (above) and using the app.
+The project keeps no automated test files (owner's decision). Verify features by signing in with
+the master account (above) and using the app; record any problem found as a screenshot in
+`error snip/`.
 
 ## 5. Production build
 

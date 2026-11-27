@@ -13,7 +13,8 @@ import { authRouter } from './modules/auth/auth.routes.js'
 import { workspaceRouter } from './modules/workspace/workspace.routes.js'
 import { settingsRouter } from './modules/settings/settings.routes.js'
 import { scheduleRouter } from './modules/schedule/schedule.routes.js'
-import { cycleRouter } from './modules/cycles/cycle.routes.js'
+import { planRouter } from './modules/plan/plan.routes.js'
+import { soundRouter } from './modules/sounds/sounds.routes.js'
 import { documentRouter, fileRouter } from './modules/documents/document.routes.js'
 import { questionRouter } from './modules/questions/question.routes.js'
 import { mockTestRouter } from './modules/exams/mockTest.routes.js'
@@ -38,6 +39,8 @@ export function createApp() {
           fontSrc: ["'self'", 'https://fonts.gstatic.com'],
           imgSrc: ["'self'", 'data:'],
           connectSrc: ["'self'"],
+          // Uploaded reminder sounds are fetched with auth and played from an in-memory blob URL.
+          mediaSrc: ["'self'", 'blob:'],
           frameSrc: ["'self'", 'blob:'],
           frameAncestors: ["'self'"],
           objectSrc: ["'none'"],
@@ -82,7 +85,8 @@ export function createApp() {
   app.use('/api/workspace', workspaceRouter)
   app.use('/api/settings', settingsRouter)
   app.use('/api/schedule', scheduleRouter)
-  app.use('/api/cycles', cycleRouter)
+  app.use('/api/plan', planRouter)
+  app.use('/api/sounds', soundRouter)
   app.use('/api/documents', documentRouter)
   app.use('/api/files', fileRouter)
   app.use('/api/questions', questionRouter)

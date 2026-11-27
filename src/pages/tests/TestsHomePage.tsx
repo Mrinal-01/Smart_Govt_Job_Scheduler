@@ -107,9 +107,9 @@ export default function TestsHomePage() {
     <main className="page">
       <div className="page-head">
         <div className="page-head__text">
-          <h1>PDF Test Builder</h1>
+          <h1>Tests</h1>
           <p className="page-head__sub">
-            Turn question-paper PDFs into your own verified question bank, then build timed mock tests. The original demo tests remain under <Link to="/mock-tests">Mock Tests</Link>.
+            Turn question-paper PDFs into your own verified question bank, then build timed mock tests.
           </p>
         </div>
         <div className="page-head__actions">

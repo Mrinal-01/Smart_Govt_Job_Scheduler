@@ -26,6 +26,7 @@ import {
   UserCog
 } from 'lucide-react'
 import type { SoundChoice } from '../types'
+import { CustomSoundsManager, useCustomSounds } from '../components/CustomSounds'
 import {
   Badge,
   Button,
@@ -39,11 +40,12 @@ import {
 } from '../components/ui'
 import { useStudy } from '../store/StudyStore'
 import { useAuth } from '../auth/AuthContext'
-import { AccountSection, AiUsageSection, RevisionPreferencesSection, SchedulePolicySection, SecuritySection } from './settings/AccountSections'
+import { AccountSection, AiUsageSection, PlanPreferencesSection, RevisionPreferencesSection, SchedulePolicySection, SecuritySection } from './settings/AccountSections'
 import { reminderAudio, notifySupported, requestNotificationPermission } from '../services/audio'
 import { downloadCSV, downloadJSON } from '../lib/utils'
 import { formatDuration } from '../lib/date'
 import { cx } from '../lib/utils'
+import { formatPhone } from '../lib/phone'
 
 type Section = 'account' | 'security' | 'profile' | 'study' | 'schedule' | 'policy' | 'revision' | 'reminders' | 'ai' | 'appearance' | 'data'
 
@@ -62,13 +64,19 @@ const SECTIONS: Array<{ key: Section; label: string; icon: React.ReactNode }> = 
 ]
 
 const SOUNDS: Array<{ value: SoundChoice; label: string }> = [
-  { value: 'chime', label: 'Chime — descending bell tones' },
+  { value: 'chime', label: 'Chime — rising bell tones' },
   { value: 'bell', label: 'Bell — repeated triangle ping' },
+  { value: 'marimba', label: 'Marimba — soft wooden arpeggio' },
+  { value: 'ping', label: 'Soft ping — gentle double ping' },
+  { value: 'digital', label: 'Digital — watch-style beeps' },
+  { value: 'gong', label: 'Gong — one deep resonance' },
   { value: 'pulse', label: 'Pulse — low urgency thump' },
+  { value: 'alarm', label: 'Alarm — urgent two-tone' },
   { value: 'none', label: 'Silent — no audio' }
 ]
 
 export default function SettingsPage() {
+  const customSounds = useCustomSounds()
   const {
     state,
     updateProfile,
@@ -99,6 +107,7 @@ export default function SettingsPage() {
   )
   const [name, setName] = useState(state.profile.name)
   const email = user?.email ?? state.profile.email
+  const phone = user?.phone ? formatPhone(user.phone) : ''
   const fileRef = useRef<HTMLInputElement>(null)
 
   const s = state.settings
@@ -136,7 +145,7 @@ export default function SettingsPage() {
         <div className="page-head__text">
           <h1>Settings</h1>
           <p className="page-head__sub">
-            Account and security, exam target, study targets, schedule policy, revision preferences, reminders, AI, theme and data. Your study data is stored on the server for your account only.
+            Your account, study targets, revision rules, reminders and theme. Your data is stored on the server for your account only.
           </p>
         </div>
         <div className="page-head__actions">
@@ -167,7 +176,12 @@ export default function SettingsPage() {
           {section === 'account' ? <AccountSection /> : null}
           {section === 'security' ? <SecuritySection /> : null}
           {section === 'policy' ? <SchedulePolicySection /> : null}
-          {section === 'revision' ? <RevisionPreferencesSection /> : null}
+          {section === 'revision' ? (
+            <div className="stack">
+              <RevisionPreferencesSection />
+              <PlanPreferencesSection />
+            </div>
+          ) : null}
           {section === 'ai' ? <AiUsageSection /> : null}
           {section === 'profile' ? (
             <Card>
@@ -176,8 +190,8 @@ export default function SettingsPage() {
                 <Field label="Full name">
                   <Input value={name} onChange={(e) => setName(e.target.value)} />
                 </Field>
-                <Field label="Email" hint="Your account email (change it under Account)">
-                  <Input type="email" value={email} readOnly />
+                <Field label="Mobile number" hint="Your sign-in number (see Account)">
+                  <Input type="tel" value={phone || email} readOnly />
                 </Field>
                 <Field label="Target examination">
                   <Select value={s.examTarget} onChange={(e) => updateSettings({ examTarget: e.target.value })}>
@@ -451,7 +465,7 @@ export default function SettingsPage() {
                 <div className="settings-row">
                   <div>
                     <p className="settings-row__label">Alert sound</p>
-                    <p className="settings-row__hint">Synthesised with the Web Audio API — no external audio file to download.</p>
+                    <p className="settings-row__hint">Built-in tones play instantly; you can also upload your own below.</p>
                   </div>
                   <div className="settings-row__control" style={{ gap: 6 }}>
                     <Select
@@ -464,11 +478,25 @@ export default function SettingsPage() {
                       }}
                       style={{ maxWidth: 210 }}
                     >
-                      {SOUNDS.map((so) => (
-                        <option key={so.value} value={so.value}>
-                          {so.label}
-                        </option>
-                      ))}
+                      <optgroup label="Built-in">
+                        {SOUNDS.map((so) => (
+                          <option key={so.value} value={so.value}>
+                            {so.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                      {customSounds.sounds.length ? (
+                        <optgroup label="Your sounds">
+                          {customSounds.sounds.map((cs) => (
+                            <option key={cs.id} value={`custom:${cs.id}`}>
+                              {cs.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ) : null}
+                      {r.sound.startsWith('custom:') && !customSounds.sounds.some((cs) => r.sound === `custom:${cs.id}`) ? (
+                        <option value={r.sound}>Uploaded sound (loading…)</option>
+                      ) : null}
                     </Select>
                     <Button
                       size="sm"
@@ -482,6 +510,17 @@ export default function SettingsPage() {
                       Test
                     </Button>
                   </div>
+                </div>
+                <div className="settings-row" style={{ display: 'block' }}>
+                  <CustomSoundsManager
+                    data={customSounds}
+                    selected={r.sound}
+                    volume={r.volume}
+                    onSelect={(v) => {
+                      updateReminder({ sound: v })
+                      reminderAudio.setConfig(v, r.volume)
+                    }}
+                  />
                 </div>
                 <div className="settings-row">
                   <div>
@@ -532,7 +571,7 @@ export default function SettingsPage() {
                           updateReminder({ browserNotifications: false })
                         }
                       }}
-                      label="Browser notifications"
+                      label="Enabled"
                       disabled={!notifySupported()}
                     />
                   </div>

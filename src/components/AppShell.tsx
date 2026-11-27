@@ -2,16 +2,13 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
   BarChart3,
   Bell,
-  BookOpenCheck,
   Brain,
   CalendarDays,
   ChevronLeft,
   CloudOff,
   CloudUpload,
   Cloud,
-  FileText,
   LogOut,
-  Repeat,
   ShieldCheck,
   ChevronRight,
   CircleHelp,
@@ -24,9 +21,7 @@ import {
   Plus,
   RotateCcw,
   Settings as SettingsIcon,
-  Sparkles,
   Sun,
-  Timer,
   X
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -37,6 +32,7 @@ import { dueRevisions, logsInRange, streakFor } from '../store/selectors'
 import { formatLongDate, formatDuration, dateKey, addDays, nowTimeLabel, greeting, weekdayOf } from '../lib/date'
 import { cx, pct } from '../lib/utils'
 import { Avatar, Button, Progress } from './ui'
+import { formatPhone } from '../lib/phone'
 
 export interface NavItem {
   to: string
@@ -59,24 +55,18 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
 
   const items: NavItem[] = [
     { to: '/', label: 'Dashboard', icon: <LayoutDashboard size={16} />, group: 'main' },
-    { to: '/sunday', label: 'Sunday Review', icon: <BookOpenCheck size={16} />, group: 'main' },
-    { to: '/schedule', label: 'My Schedule', icon: <CalendarDays size={16} />, group: 'study' },
-    { to: '/cycles', label: 'Study Cycles', icon: <Repeat size={16} />, group: 'study' },
-    { to: '/sessions', label: 'Study Sessions', icon: <Timer size={16} />, group: 'study' },
+    { to: '/schedule', label: 'My Schedule', icon: <CalendarDays size={16} />, group: 'main' },
+    { to: '/revision', label: 'Revision Center', icon: <RotateCcw size={16} />, badge: due.length, group: 'main' },
     { to: '/subjects', label: 'Subjects & Chapters', icon: <GraduationCap size={16} />, group: 'study' },
-    { to: '/revision', label: 'Revision Center', icon: <RotateCcw size={16} />, badge: due.length, group: 'study' },
-    { to: '/mock-tests', label: 'Mock Tests', icon: <ClipboardList size={16} />, group: 'study' },
-    { to: '/tests', label: 'PDF Test Builder', icon: <FileText size={16} />, group: 'study' },
+    { to: '/tests', label: 'Tests', icon: <ClipboardList size={16} />, group: 'study' },
     { to: '/mistakes', label: 'Mistake Bank', icon: <CircleHelp size={16} />, badge: state.mistakes.filter((m) => m.status === 'unresolved').length, group: 'study' },
-    { to: '/analytics', label: 'Analytics', icon: <BarChart3 size={16} />, group: 'insight' },
-    { to: '/assistant', label: 'AI Study Assistant', icon: <Sparkles size={16} />, group: 'insight' },
-    { to: '/settings', label: 'Settings', icon: <SettingsIcon size={16} />, group: 'insight' }
+    { to: '/analytics', label: 'Analytics', icon: <BarChart3 size={16} />, group: 'study' },
+    { to: '/settings', label: 'Settings', icon: <SettingsIcon size={16} />, group: 'study' }
   ]
 
   const groups = [
-    { key: 'main', label: 'Overview' },
-    { key: 'study', label: 'Study' },
-    { key: 'insight', label: 'Insights' }
+    { key: 'main', label: 'Today' },
+    { key: 'study', label: 'Study' }
   ] as const
 
   return (
@@ -184,7 +174,7 @@ function AccountMenu() {
         <div className="account-menu__panel" role="menu">
           <div className="account-menu__who">
             <strong>{name}</strong>
-            <span className="text-tertiary">{user?.email}</span>
+            <span className="text-tertiary">{user?.phone ? formatPhone(user.phone) : user?.email}</span>
           </div>
           <button role="menuitem" onClick={() => { setOpen(false); navigate('/settings?section=account') }}>
             <SettingsIcon size={14} /> Account settings
@@ -229,7 +219,12 @@ export function Header({ onOpenMenu }: { onOpenMenu: () => void }) {
 
       <div className="header__left">
         <div className="header__date">
-          <span className="header__date-main">{formatLongDate(today)}</span>
+          <span className="header__date-main">
+            {/* "Friday, 27 Nov 2026" on desktop; "27 Nov" on phones */}
+            <span className="long-only">{formatLongDate(today).split(', ')[0]}, </span>
+            {formatLongDate(today).split(', ').slice(1).join(', ').replace(/ \d{4}$/, '')}
+            <span className="long-only">{formatLongDate(today).match(/ \d{4}$/)?.[0] ?? ''}</span>
+          </span>
           <span className="header__date-sub">
             {state.settings.timezone} · {now}
           </span>

@@ -24,6 +24,7 @@ import {
 import { Badge, Button, Card, CardHeader, EmptyState, Progress, Ring, StatCard } from '../components/ui'
 import { ActiveSessionCard, SessionCard, openCompletion, triggerStartSession } from '../components/sessions'
 import { useStudy } from '../store/StudyStore'
+import { CarryoverBanner } from '../components/revision'
 import {
   consistencyFor,
   dueRevisions,
@@ -81,6 +82,7 @@ export default function DashboardPage() {
 
   return (
     <main className="page">
+      <CarryoverBanner />
       {/* ------------------------------ Hero ------------------------------ */}
       <section className="hero" style={{ marginBottom: 18 }}>
         <div className="hero__text">
@@ -296,7 +298,7 @@ export default function DashboardPage() {
               icon={<RotateCcw size={15} />}
               actions={
                 <Button size="sm" variant="ghost" onClick={() => navigate('/revision')} iconRight={<ChevronRight size={13} />}>
-                  Center
+                  Open
                 </Button>
               }
             />
@@ -393,14 +395,14 @@ export default function DashboardPage() {
               <Button block variant="secondary" icon={<BookOpenCheck size={14} />} onClick={() => navigate('/sunday')}>
                 Sunday weekly review
               </Button>
-              <Button block variant="secondary" icon={<Target size={14} />} onClick={() => navigate('/mock-tests')}>
+              <Button block variant="secondary" icon={<Target size={14} />} onClick={() => navigate('/tests')}>
                 Take a mock test
               </Button>
               <Button block variant="secondary" icon={<AlertTriangle size={14} />} onClick={() => navigate('/mistakes')}>
                 Review mistake bank
               </Button>
-              <Button block variant="ghost" icon={<CircleSlash size={14} />} onClick={() => navigate('/sessions')}>
-                View all sessions
+              <Button block variant="ghost" icon={<CircleSlash size={14} />} onClick={() => navigate('/schedule')}>
+                Open my schedule
               </Button>
             </div>
           </Card>

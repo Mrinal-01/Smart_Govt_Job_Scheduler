@@ -1,130 +1,174 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { MailCheck, UserPlus } from 'lucide-react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { MessageSquare, UserPlus } from 'lucide-react'
 import { useAuth } from '../../auth/AuthContext'
-import { ApiError, api, errorMessage } from '../../lib/http'
+import { ApiError, errorMessage } from '../../lib/http'
 import { Button, Checkbox, Field, Input } from '../../components/ui'
-import { AuthLayout, DevMailbox, PasswordRules, passwordProblems } from './AuthShared'
+import { AuthLayout, DevCode, OtpField, PhoneField, phoneProblem, toE164, useCountdown } from './AuthShared'
 
-type Errors = Partial<Record<'name' | 'email' | 'password' | 'confirmPassword' | 'acceptTerms' | 'form', string>>
+type Errors = Partial<Record<'name' | 'phone' | 'otp' | 'acceptTerms', string>>
 
+/** Mirrors the server's name rule. */
+function nameProblem(name: string): string | null {
+  const n = name.trim()
+  if (n.length < 2) return 'Name must be at least 2 characters.'
+  if (n.length > 80) return 'Name is too long.'
+  if (!/^\p{L}[\p{L} .'-]*$/u.test(n)) return 'Use letters, spaces, dots, apostrophes and hyphens only.'
+  return null
+}
+
+/** Name + phone + terms → one-time code → account created and signed in. */
 export default function RegisterPage() {
-  const { register } = useAuth()
+  const { requestOtp, register } = useAuth()
   const navigate = useNavigate()
-  const [form, setForm] = useState({ name: '', email: '', password: '', confirmPassword: '', acceptTerms: false })
+  const location = useLocation()
+  const [name, setName] = useState('')
+  const [phone, setPhone] = useState(() => String((location.state as { phone?: string } | null)?.phone ?? ''))
+  const [acceptTerms, setAcceptTerms] = useState(false)
+  const [otp, setOtp] = useState('')
+  const [step, setStep] = useState<'details' | 'code'>('details')
+  const [resendAt, setResendAt] = useState<number | null>(null)
+  const [devOtp, setDevOtp] = useState<string | undefined>()
   const [errors, setErrors] = useState<Errors>({})
+  const [error, setError] = useState<ApiError | null>(null)
   const [busy, setBusy] = useState(false)
-  const [done, setDone] = useState<{ email: string; verificationRequired: boolean } | null>(null)
-  const [resent, setResent] = useState(false)
+  const resendIn = useCountdown(resendAt)
 
-  const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) => setForm((f) => ({ ...f, [k]: v }))
-
-  const validate = (): Errors => {
-    const e: Errors = {}
-    if (form.name.trim().length < 2) e.name = 'Name must be at least 2 characters'
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) e.email = 'Enter a valid email address'
-    const pw = passwordProblems(form.password, form.email)
-    if (pw.length) e.password = pw[0]
-    if (form.password !== form.confirmPassword) e.confirmPassword = 'Passwords do not match'
-    if (!form.acceptTerms) e.acceptTerms = 'You must accept the terms to create an account'
-    return e
+  const mapIssues = (e: ApiError) => {
+    const mapped: Errors = {}
+    e.issues.forEach((i) => {
+      const key = i.path as keyof Errors
+      if (['name', 'phone', 'otp', 'acceptTerms'].includes(key) && !mapped[key]) mapped[key] = i.message
+    })
+    return mapped
   }
 
-  const submit = async (ev: React.FormEvent) => {
-    ev.preventDefault()
-    const v = validate()
+  const send = async () => {
+    setError(null)
+    const v: Errors = {}
+    const np = nameProblem(name)
+    const pp = phoneProblem(phone)
+    if (np) v.name = np
+    if (pp) v.phone = pp
+    if (!acceptTerms) v.acceptTerms = 'You must accept the terms to create an account.'
     setErrors(v)
     if (Object.keys(v).length) return
     setBusy(true)
     try {
-      const r = await register({ ...form, name: form.name.trim(), email: form.email.trim() })
-      setDone({ email: form.email.trim().toLowerCase(), verificationRequired: r.verificationRequired })
+      const r = await requestOtp(toE164(phone), 'signup')
+      setDevOtp(r.devOtp)
+      setOtp('')
+      setResendAt(Date.now() + r.resendIn * 1000)
+      setStep('code')
     } catch (err) {
-      if (err instanceof ApiError && err.issues.length) {
-        const mapped: Errors = {}
-        err.issues.forEach((i) => {
-          const key = (i.path || 'form') as keyof Errors
-          if (!mapped[key]) mapped[key] = i.message
-        })
-        setErrors(mapped)
-      } else setErrors({ form: errorMessage(err) })
+      const e = err instanceof ApiError ? err : new ApiError(errorMessage(err), 0)
+      if (e.code === 'OTP_COOLDOWN') {
+        setResendAt(Date.now() + Number((e.details as { retryAfter?: number })?.retryAfter ?? 60) * 1000)
+        setStep('code')
+      }
+      if (e.issues.length) setErrors(mapIssues(e))
+      else setError(e)
     } finally {
       setBusy(false)
     }
   }
 
-  if (done) {
-    return (
-      <AuthLayout title="Check your inbox" subtitle={<>We sent a verification link to <strong>{done.email}</strong>.</>}>
-        <div className="stack">
-          {done.verificationRequired ? (
-            <>
-              <div className="callout callout--info">
-                <MailCheck size={15} />
-                <span>Open the link to activate your account, then sign in. The link expires in 24 hours.</span>
-              </div>
-              <Button
-                onClick={async () => {
-                  await api('/api/auth/resend-verification', { method: 'POST', body: { email: done.email }, auth: false }).catch(() => undefined)
-                  setResent(true)
-                }}
-                disabled={resent}
-              >
-                {resent ? 'Sent — check your inbox' : 'Resend email'}
-              </Button>
-              <DevMailbox tag="verify-email" />
-            </>
-          ) : (
-            <div className="callout callout--success">Your account is ready.</div>
-          )}
-          <Button variant="primary" onClick={() => navigate('/login')}>
-            Go to sign in
-          </Button>
-        </div>
-      </AuthLayout>
-    )
+  const submit = async (ev: React.FormEvent) => {
+    ev.preventDefault()
+    if (step === 'details') return void send()
+    setError(null)
+    if (!/^\d{6}$/.test(otp)) return setErrors({ otp: 'Enter the 6-digit code.' })
+    setErrors({})
+    setBusy(true)
+    try {
+      await register({ name: name.trim(), phone: toE164(phone), otp, acceptTerms })
+      navigate('/', { replace: true })
+    } catch (err) {
+      const e = err instanceof ApiError ? err : new ApiError(errorMessage(err), 0)
+      if (e.issues.length) setErrors(mapIssues(e))
+      else setError(e)
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
     <AuthLayout
       title="Create your account"
-      subtitle="Plan, revise and test — with your data synced securely to your account."
+      subtitle="Sign up with your mobile number — no password needed. Your data syncs securely to your account."
       footer={
         <>
-          Already have an account? <Link to="/login">Sign in</Link>
+          Already registered? <Link to="/login">Log in</Link>
         </>
       }
     >
       <form className="stack" onSubmit={submit} noValidate>
         <Field label="Full name" htmlFor="reg-name" error={errors.name} required>
-          <Input id="reg-name" autoComplete="name" value={form.name} onChange={(e) => set('name', e.target.value)} />
+          <Input id="reg-name" autoComplete="name" maxLength={80} value={name} disabled={step === 'code'} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label="Email" htmlFor="reg-email" error={errors.email} required>
-          <Input id="reg-email" type="email" autoComplete="email" value={form.email} onChange={(e) => set('email', e.target.value)} />
-        </Field>
-        <Field label="Password" htmlFor="reg-password" error={errors.password} required>
-          <Input id="reg-password" type="password" autoComplete="new-password" value={form.password} onChange={(e) => set('password', e.target.value)} />
-        </Field>
-        {!errors.password ? <PasswordRules password={form.password} email={form.email} /> : null}
-        <Field label="Confirm password" htmlFor="reg-confirm" error={errors.confirmPassword} required>
-          <Input id="reg-confirm" type="password" autoComplete="new-password" value={form.confirmPassword} onChange={(e) => set('confirmPassword', e.target.value)} />
-        </Field>
-        <div>
-          <Checkbox
-            checked={form.acceptTerms}
-            onChange={(v) => set('acceptTerms', v)}
-            label={
-              <>
-                I accept the <Link to="/terms" target="_blank">Terms of Use</Link>
-              </>
-            }
-          />
-          {errors.acceptTerms ? <p className="field__error">{errors.acceptTerms}</p> : null}
-        </div>
-        {errors.form ? <div className="callout callout--danger" role="alert">{errors.form}</div> : null}
-        <Button type="submit" variant="primary" size="lg" block loading={busy} icon={<UserPlus size={15} />}>
-          Create account
-        </Button>
+        <PhoneField id="reg-phone" value={phone} disabled={step === 'code'} error={errors.phone} onChange={setPhone} />
+        {step === 'details' ? (
+          <div>
+            <Checkbox
+              checked={acceptTerms}
+              onChange={setAcceptTerms}
+              label={
+                <>
+                  I accept the{' '}
+                  <Link to="/terms" target="_blank">
+                    Terms of Use
+                  </Link>
+                </>
+              }
+            />
+            {errors.acceptTerms ? <p className="field__error">{errors.acceptTerms}</p> : null}
+          </div>
+        ) : (
+          <>
+            <p className="auth-step">
+              Code sent to <strong>+91 {phone}</strong> ·{' '}
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => {
+                  setStep('details')
+                  setOtp('')
+                  setError(null)
+                }}
+              >
+                Change details
+              </button>
+            </p>
+            <OtpField id="reg-otp" value={otp} onChange={setOtp} error={errors.otp} />
+            <DevCode code={devOtp} />
+          </>
+        )}
+        {error ? (
+          <div className="callout callout--danger" role="alert">
+            <div>
+              {error.message}
+              {error.code === 'PHONE_IN_USE' ? (
+                <div style={{ marginTop: 6 }}>
+                  <Link to="/login">Log in with this number</Link>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+        {step === 'details' ? (
+          <Button type="submit" variant="primary" size="lg" block loading={busy} icon={<MessageSquare size={15} />}>
+            Send code
+          </Button>
+        ) : (
+          <>
+            <Button type="submit" variant="primary" size="lg" block loading={busy} icon={<UserPlus size={15} />}>
+              Create account
+            </Button>
+            <Button type="button" variant="ghost" block disabled={busy || resendIn > 0} onClick={send}>
+              {resendIn > 0 ? `Resend code in ${resendIn}s` : 'Resend code'}
+            </Button>
+          </>
+        )}
       </form>
     </AuthLayout>
   )

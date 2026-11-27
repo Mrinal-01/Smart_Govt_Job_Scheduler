@@ -526,9 +526,9 @@
 }
 
 .day-tab.is-active {
-  background: var(--text);
-  border-color: var(--text);
-  color: var(--surface-inverse);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
 
 .day-tab.is-today:not(.is-active) {
@@ -1799,4 +1799,349 @@ input[type='range']::-moz-range-thumb {
   .result-hero {
     gap: 14px;
   }
+}
+
+/* ======================= Study plan: gates & revision ======================= */
+
+.rev-card__actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.obligation-card.is-done {
+  background: var(--surface-2);
+}
+
+.obligation-card__topics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.topic-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+}
+
+.topic-chip.is-done {
+  border-color: var(--success-border);
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.rev-timer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 12.5px;
+}
+
+.rev-timer__clock {
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.practice-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.lock-reasons {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+}
+
+.lock-reasons li {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.carryover-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--warning-border);
+  background: var(--warning-soft);
+}
+
+.carryover-block.is-complete {
+  border-color: var(--success-border);
+  background: var(--success-soft);
+}
+
+.carryover-block__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.carryover-block__items {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 6px;
+}
+
+.carryover-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 7px 9px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.carryover-item:hover {
+  border-color: var(--border-strong);
+}
+
+.carryover-item.is-done {
+  color: var(--success);
+}
+
+.carryover-item.is-overdue {
+  border-color: var(--danger-border);
+}
+
+.carryover-item__subject {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.carryover-item__topics {
+  color: var(--text-tertiary);
+  flex: 1;
+  min-width: 0;
+}
+
+/* Schedule slot additions */
+
+.schedule-slot.is-locked {
+  border-color: var(--warning-border);
+}
+
+.schedule-slot.is-done {
+  background: var(--surface-2);
+}
+
+.slot-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.slot-facts > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.slot-lock {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.slot-lock.is-ok {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.slot-lock.is-bypassed {
+  background: var(--purple-soft);
+  color: var(--purple);
+}
+
+.action-menu {
+  position: relative;
+}
+
+.action-menu__list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 30;
+  min-width: 220px;
+  padding: 5px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+}
+
+.action-menu__list {
+  max-height: min(70vh, 380px);
+  overflow-y: auto;
+}
+
+.action-menu__list.is-up {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.action-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.action-menu__item:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.action-menu__item:disabled {
+  color: var(--text-tertiary);
+  cursor: not-allowed;
+}
+
+.action-menu__item.is-danger {
+  color: var(--danger);
+}
+
+.action-menu__sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border-subtle);
+}
+
+.cycle-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cycle-pill {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 120px;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 11.5px;
+}
+
+.cycle-pill strong {
+  font-size: 12.5px;
+}
+
+@media (max-width: 640px) {
+  .schedule-slot {
+    flex-wrap: wrap;
+  }
+  .schedule-slot__actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  .carryover-block__items {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Revision block shown in the timeline right before the session it unlocks */
+.revision-block-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--r-md);
+  border: 1px dashed var(--warning-border);
+  background: var(--warning-soft);
+  font-size: 12.5px;
+}
+
+.revision-block-row.is-done {
+  border-color: var(--success-border);
+  background: var(--success-soft);
+}
+
+.revision-block-row.is-overdue {
+  border-color: var(--danger-border);
+}
+
+.revision-block-row__time {
+  min-width: 76px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+/* Uploaded reminder sounds (Settings › Reminders) */
+.custom-sounds__list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.custom-sounds__list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: 12.5px;
+}
+
+.custom-sounds__list li.is-selected {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
 }

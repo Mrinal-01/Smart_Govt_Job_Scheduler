@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { env } from '../../config/env.js'
 import { asyncHandler } from '../../lib/errors.js'
 import { devOutbox, mailDriverName } from '../../integrations/mail.js'
+import { devCodesVisible, devSmsInbox } from '../../integrations/sms.js'
 import { describeIntegrations } from './system.service.js'
 
 export const systemRouter = Router()
@@ -11,7 +12,7 @@ systemRouter.get(
   '/config',
   asyncHandler(async (_req, res) => {
     const i = await describeIntegrations()
-    res.json({ ...i, devMailbox: env.NODE_ENV === 'development' && mailDriverName() === 'console' })
+    res.json({ ...i, devMailbox: env.NODE_ENV === 'development' && mailDriverName() === 'console', devSms: devCodesVisible() })
   })
 )
 
@@ -24,5 +25,13 @@ if (env.NODE_ENV === 'development') {
   systemRouter.get('/dev/mailbox', (_req, res) => {
     if (mailDriverName() !== 'console') return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Dev mailbox is only available with MAIL_DRIVER=console' } })
     res.json({ messages: devOutbox.map(({ html: _h, ...m }) => m) })
+  })
+}
+
+/** Development-only SMS inbox: one-time codes the console SMS driver would have sent. */
+if (env.NODE_ENV === 'development') {
+  systemRouter.get('/dev/sms', (_req, res) => {
+    if (!devCodesVisible()) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Dev SMS inbox is only available with SMS_DRIVER=console' } })
+    res.json({ messages: devSmsInbox })
   })
 }

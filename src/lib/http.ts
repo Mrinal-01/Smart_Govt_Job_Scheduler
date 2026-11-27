@@ -145,6 +145,15 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   return (await res.json()) as T
 }
 
+/** Authenticated binary download (e.g. a private audio file). Retries once after a token refresh. */
+export async function apiBlob(path: string): Promise<Blob> {
+  const get = () => fetch(`${BASE}${path}`, { credentials: 'include', headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {} })
+  let res = await get()
+  if (res.status === 401 && (await refreshSession())) res = await get()
+  if (!res.ok) throw await parseError(res)
+  return res.blob()
+}
+
 export interface UploadHandle<T> {
   promise: Promise<T>
   abort: () => void

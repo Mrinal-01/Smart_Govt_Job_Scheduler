@@ -1,28 +1,16 @@
 import type { Types } from 'mongoose'
 import { env } from '../../config/env.js'
+import { clock } from '../../lib/clock.js'
 import { addDays, dateKey, diffDays } from '../../lib/dates.js'
 import { AppError, conflict, notFound, unprocessable } from '../../lib/errors.js'
 import { Schedule, ScheduleVersion } from '../../models/index.js'
 import { loadCurriculum } from '../workspace/curriculum.service.js'
 import { getSettings } from '../settings/settings.service.js'
 import { notify } from '../notifications/notification.routes.js'
+import { normalizeSlot, validateSlots, type SlotInput } from './slots.js'
+import { RevisionObligation } from '../../models/index.js'
 
-export interface SlotInput {
-  id: string
-  weekday: number
-  subjectId: string
-  sessionNumber: number
-  label: string
-  startTime: string
-  endTime: string
-  durationMinutes: number
-  requiresRevision: boolean
-  learningTarget: string
-  practiceTarget: number
-  reminderEnabled: boolean
-  breakAfterMinutes: number
-  order: number
-}
+export type { SlotInput } from './slots.js'
 
 const COMPARED_FIELDS: Array<keyof SlotInput> = [
   'weekday',
@@ -37,13 +25,24 @@ const COMPARED_FIELDS: Array<keyof SlotInput> = [
   'reminderEnabled',
   'breakAfterMinutes',
   'order',
-  'sessionNumber'
+  'sessionNumber',
+  'sessionType',
+  'cycleNumber',
+  'chapterId',
+  'topicIds',
+  'revisionMinutes',
+  'revisionPolicy',
+  'prerequisiteSlotIds'
 ]
+const same = (a: unknown, b: unknown) => (Array.isArray(a) || Array.isArray(b) ? JSON.stringify(a ?? []) === JSON.stringify(b ?? []) : a === b)
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
 export const policy = () => ({ maxChanges: env.SCHEDULE_MAX_CHANGES, windowDays: env.SCHEDULE_WINDOW_DAYS })
 
-export function diffSlots(previous: SlotInput[], next: SlotInput[], subjectName: (id: string) => string) {
+export function diffSlots(previousRaw: SlotInput[], nextRaw: SlotInput[], subjectName: (id: string) => string) {
+  // Normalize both sides so versions published before the study-plan fields existed do not show phantom changes.
+  const previous = previousRaw.map((s) => normalizeSlot(s as unknown as Record<string, unknown>))
+  const next = nextRaw.map((s) => normalizeSlot(s as unknown as Record<string, unknown>))
   const before = new Map(previous.map((s) => [s.id, s]))
   const after = new Map(next.map((s) => [s.id, s]))
   const added: string[] = []
@@ -59,7 +58,7 @@ export function diffSlots(previous: SlotInput[], next: SlotInput[], subjectName:
       summary.push(`Added ${describe(slot)}`)
       continue
     }
-    const fields = COMPARED_FIELDS.filter((f) => old[f] !== slot[f])
+    const fields = COMPARED_FIELDS.filter((f) => !same(old[f], slot[f]))
     if (fields.length) {
       modified.push({ slotId: id, fields })
       summary.push(`Changed ${describe(old)}: ${fields.join(', ')}`)
@@ -77,7 +76,7 @@ export function diffSlots(previous: SlotInput[], next: SlotInput[], subjectName:
   return { added, removed, modified, summary, changedFields }
 }
 
-async function usage(userId: Types.ObjectId, now = new Date()) {
+async function usage(userId: Types.ObjectId, now = clock.now()) {
   const { maxChanges, windowDays } = policy()
   const since = new Date(now.getTime() - windowDays * 86_400_000)
   const counted = await ScheduleVersion.find({ userId, countsTowardLimit: true, publishedAt: { $gte: since } })
@@ -123,7 +122,7 @@ async function effectiveVersion(userId: Types.ObjectId, date: string) {
 
 export async function getStatus(userId: Types.ObjectId) {
   const tz = await timezoneFor(userId)
-  const today = dateKey(new Date(), tz)
+  const today = dateKey(clock.now(), tz)
   const schedule = await Schedule.findOne({ userId }).lean()
   const latest = schedule ? await ScheduleVersion.findOne({ scheduleId: schedule._id }).sort({ version: -1 }).lean() : null
   const active = await effectiveVersion(userId, today)
@@ -158,6 +157,20 @@ export async function getEffective(userId: Types.ObjectId, date: string) {
   return v ? serializeVersion(v) : null
 }
 
+/**
+ * Pending revision obligations are never discarded by a schedule change — they keep gating
+ * by subject, whatever the new timetable looks like. The preview reports them.
+ */
+async function pendingCarryOver(userId: Types.ObjectId) {
+  const pending = await RevisionObligation.find({ userId, status: { $ne: 'completed' } }).select('type subjectName dueDate').lean()
+  return {
+    pendingObligations: pending.length,
+    bySubject: Object.entries(
+      pending.reduce<Record<string, number>>((acc, o) => ({ ...acc, [o.subjectName]: (acc[o.subjectName] ?? 0) + 1 }), {})
+    ).map(([subjectName, count]) => ({ subjectName, count }))
+  }
+}
+
 export interface PublishInput {
   slots: SlotInput[]
   changeReason: string
@@ -166,22 +179,30 @@ export interface PublishInput {
   overrideReason?: string
 }
 
-export async function previewPublish(userId: Types.ObjectId, slots: SlotInput[]) {
+export async function previewPublish(userId: Types.ObjectId, rawSlots: SlotInput[]) {
+  const slots = rawSlots.map((s) => normalizeSlot(s as unknown as Record<string, unknown>))
   const cur = await loadCurriculum(userId)
   const schedule = await Schedule.findOne({ userId }).lean()
   const latest = schedule ? await ScheduleVersion.findOne({ scheduleId: schedule._id }).sort({ version: -1 }).lean() : null
   const name = (id: string) => cur.subject(id)?.name ?? 'Unknown subject'
   const diff = diffSlots((latest?.slots ?? []) as SlotInput[], slots, name)
-  return { isBaseline: !latest, diff, usage: await usage(userId), policy: policy() }
+  return { isBaseline: !latest, diff, validation: validateSlots(slots, cur), carryOver: await pendingCarryOver(userId), usage: await usage(userId), policy: policy() }
 }
 
-export async function publish(userId: Types.ObjectId, input: PublishInput) {
+export async function publish(userId: Types.ObjectId, rawInput: PublishInput) {
+  // Callers other than the route (seed/import scripts) may pass legacy slots: normalize here too.
+  const input = { ...rawInput, slots: rawInput.slots.map((s) => normalizeSlot(s as unknown as Record<string, unknown>)) }
   const tz = await timezoneFor(userId)
-  const today = dateKey(new Date(), tz)
+  const today = dateKey(clock.now(), tz)
   const cur = await loadCurriculum(userId)
 
   for (const slot of input.slots) {
     if (!cur.subject(slot.subjectId)) throw unprocessable(`Slot ${slot.id} references an unknown subject`, 'UNKNOWN_SUBJECT')
+  }
+  // Future dependencies are revalidated on every publish; invalid dependency graphs are never stored.
+  const validation = validateSlots(input.slots, cur)
+  if (validation.errors.length) {
+    throw unprocessable(validation.errors[0].message, 'INVALID_SCHEDULE_DEPENDENCIES', validation)
   }
   const ids = new Set(input.slots.map((s) => s.id))
   if (ids.size !== input.slots.length) throw unprocessable('Duplicate slot ids in schedule', 'DUPLICATE_SLOT')
@@ -231,7 +252,7 @@ export async function publish(userId: Types.ObjectId, input: PublishInput) {
       changes: { added: diff.added, removed: diff.removed, modified: diff.modified, summary: diff.summary },
       changedFields: diff.changedFields,
       changeReason: input.changeReason.trim() || (isBaseline ? 'Initial schedule' : ''),
-      publishedAt: new Date(),
+      publishedAt: clock.now(),
       effectiveFrom,
       countsTowardLimit: !isBaseline,
       override,
