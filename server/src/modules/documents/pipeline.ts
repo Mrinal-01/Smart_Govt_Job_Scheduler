@@ -3,7 +3,8 @@ import { logger } from '../../lib/logger.js'
 import { AppError } from '../../lib/errors.js'
 import { storage } from '../../integrations/storage.js'
 import { getAIProvider } from '../../integrations/ai.js'
-import { Question, UploadedDocument } from '../../models/index.js'
+import { Question, UploadedDocument, taxonomyKey } from '../../models/index.js'
+import { enqueueAnswering } from '../questions/answer.service.js'
 import { loadCurriculum } from '../workspace/curriculum.service.js'
 import { getSettings } from '../settings/settings.service.js'
 import { notify } from '../notifications/notification.routes.js'
@@ -13,6 +14,8 @@ import { normalizeForHash, parseQuestions } from './extraction/questionParser.js
 import { refineWithAI, type AiRefinement } from './extraction/aiStructurer.js'
 
 const MIN_TEXT_CHARS = 25
+/** Flags that keep a question out of tests until a person or an AI re-check clears them. */
+const BLOCKING_FLAGS = ['low_confidence', 'reported', 'recheck_disagrees', 'ai_unanswerable', 'ai_low_confidence', 'ai_answer_invalid', 'incomplete', 'generator_disagrees', 'needs_subject']
 
 async function setProgress(id: Types.ObjectId, stage: string, progress: number) {
   await UploadedDocument.updateOne({ _id: id }, { $set: { stage, progress } })
@@ -21,7 +24,8 @@ async function setProgress(id: Types.ObjectId, stage: string, progress: number) 
 /**
  * Full server-side processing of one uploaded PDF:
  * text extraction → OCR fallback for scanned pages → deterministic parsing →
- * optional AI structuring → deduplicated insert into the owner's question bank.
+ * optional AI structuring → deduplicated insert into the shared question hub → background
+ * AI answering of questions that came without an answer key.
  */
 export async function processDocument(documentId: Types.ObjectId) {
   const doc = await UploadedDocument.findById(documentId)
@@ -94,12 +98,14 @@ export async function processDocument(documentId: Types.ObjectId) {
     aiNote = 'AI structuring is not configured; questions were extracted by the rule-based parser only.'
   }
 
-  // 5. Save (deduplicated per owner by normalized content hash)
+  // 5. Save into the shared hub (deduplicated across all students by normalized content hash)
   await setProgress(doc._id, 'saving questions', 90)
   const singleSubject = intentSubjects.length === 1 ? intentSubjects[0] : null
   let inserted = 0
   let duplicates = 0
   let needsReview = 0
+  let answersFilled = 0
+  const toAnswer: Types.ObjectId[] = []
   for (const [index, q] of parsed.questions.entries()) {
     const ai = refinements.get(index)
     const flags = [...q.flags]
@@ -117,14 +123,19 @@ export async function processDocument(documentId: Types.ObjectId) {
         flags.push('subject_suggested_by_ai')
       }
     }
+    // With several subjects chosen, the AI answering step can still assign one from the upload's list.
     if (!subject) flags.push('needs_subject')
     const answer = q.answer && q.answer.every((a) => options.some((o) => o.label === a)) ? q.answer : null
-    const confident = q.confidence >= 0.8 && !imagePages.has(q.pageNumber)
-    const status = confident ? 'extracted' : 'needs_review'
+    const confident = q.confidence >= 0.8
+    if (!confident) flags.push('low_confidence')
+    // ready: trusted key + clean extraction + subject; pending_answer: clean but no key (AI solves it);
+    // needs_review: unclear extraction, or a key without a subject.
+    const status = !confident ? 'needs_review' : answer ? (subject ? 'ready' : 'needs_review') : 'pending_answer'
     if (status === 'needs_review') needsReview += 1
+    const contentHash = normalizeForHash(questionText, options)
     try {
-      await Question.create({
-        userId,
+      const created = await Question.create({
+        uploadedBy: userId,
         origin: 'pdf',
         documentId: doc._id,
         source: { documentId: doc._id, pageNumber: q.pageNumber, questionNumber: q.number },
@@ -134,22 +145,56 @@ export async function processDocument(documentId: Types.ObjectId) {
         options,
         correctAnswer: answer,
         answerSource: answer ? 'document_key' : null,
+        answeredAt: answer ? new Date() : null,
         explanation: q.explanation,
-        subjectId: subject?.id ?? null,
         subjectName: subject?.name ?? null,
+        subjectKey: taxonomyKey(subject?.name),
         difficulty: 'unknown',
         status,
         extractionConfidence: q.confidence,
         flags,
         aiStructured: ai ? ai.raw : null,
-        contentHash: normalizeForHash(questionText, options)
+        contentHash
       })
       inserted += 1
+      if (status === 'pending_answer') toAnswer.push(created._id)
     } catch (err) {
-      if ((err as { code?: number }).code === 11000) duplicates += 1
-      else throw err
+      if ((err as { code?: number }).code !== 11000) throw err
+      duplicates += 1
+      // Same question already in the hub: remember this PDF had it, and let this PDF's answer key
+      // fill a missing answer (an answer key beats an AI answer that is still pending).
+      await Question.updateOne({ contentHash }, { $addToSet: { alsoInDocuments: doc._id } })
+      if (answer && confident) {
+        const filled = await Question.updateOne(
+          { contentHash, status: { $in: ['pending_answer', 'needs_review'] }, correctAnswer: null },
+          {
+            $set: {
+              correctAnswer: answer,
+              answerSource: 'document_key',
+              answeredAt: new Date(),
+              status: 'ready',
+              'aiCheck.state': 'done',
+              ...(subject ? { subjectName: subject.name, subjectKey: taxonomyKey(subject.name) } : {})
+            }
+          }
+        )
+        // A question that still lacks a subject stays out of tests.
+        await Question.updateOne({ contentHash, status: 'ready', subjectKey: null }, { $set: { status: 'needs_review' } })
+        answersFilled += filled.modifiedCount
+      }
+      // A single-subject upload can supply the subject an earlier multi-subject upload lacked;
+      // an answered question that was held back only for its subject then becomes ready.
+      if (subject) {
+        await Question.updateOne({ contentHash, subjectKey: null }, { $set: { subjectName: subject.name, subjectKey: taxonomyKey(subject.name) }, $pull: { flags: 'needs_subject' } })
+        await Question.updateOne(
+          { contentHash, status: 'needs_review', correctAnswer: { $ne: null }, subjectKey: { $ne: null }, flags: { $nin: BLOCKING_FLAGS } },
+          { $set: { status: 'ready' } }
+        )
+      }
     }
   }
+  const pendingAnswer = toAnswer.length
+  await enqueueAnswering(toAnswer)
 
   const failedForOcr = parsed.questions.length === 0 && ocrUnavailablePages > 0 && textPages === 0
   await UploadedDocument.updateOne(
@@ -168,6 +213,8 @@ export async function processDocument(documentId: Types.ObjectId) {
           inserted,
           duplicates,
           needsReview,
+          pendingAnswer,
+          answersFilled,
           textPages,
           ocrPages,
           ocrUnavailablePages,
@@ -182,7 +229,9 @@ export async function processDocument(documentId: Types.ObjectId) {
   await notify(userId, {
     type: failedForOcr ? 'document_failed' : 'document_processed',
     title: failedForOcr ? `Could not read “${doc.originalName}”` : `“${doc.originalName}” processed`,
-    message: failedForOcr ? 'OCR is required for this scanned PDF.' : `${inserted} new question(s), ${duplicates} duplicate(s), ${needsReview} need review.`,
+    message: failedForOcr
+      ? 'OCR is required for this scanned PDF.'
+      : `${inserted} new question(s) added to the hub, ${duplicates} already there, ${pendingAnswer} waiting for an AI answer, ${needsReview} need review.`,
     link: `/tests/documents/${doc._id}`
   })
 }

@@ -7,9 +7,9 @@ import type { ParsedQuestion } from './questionParser.js'
  * Optional AI refinement of low-confidence extractions. Guardrails:
  *  - the model only restructures text that exists in the PDF (option/question
  *    text must be found in the raw extraction, otherwise the AI result is rejected);
- *  - it is never asked for, and never allowed to set, a correct answer;
- *  - results are stored separately (aiStructured) and the question stays
- *    "needs_review" until the student verifies it.
+ *  - it is never asked for, and never allowed to set, a correct answer here
+ *    (answers come from the answer key, the uploader, or the separate answering step);
+ *  - results are stored separately (aiStructured).
  */
 
 const BATCH = 12
@@ -32,7 +32,8 @@ const outputSchema = z.object({
       questionText: z.string(),
       options: z.array(z.object({ label: z.string(), text: z.string() })),
       questionType: z.enum(['single_correct', 'multiple_correct', 'numeric', 'true_false', 'unknown']),
-      subjectName: z.string().nullable()
+      // nullish: the provider drops nulls before validation
+      subjectName: z.string().nullish()
     })
   )
 })
@@ -110,7 +111,7 @@ Restructure each raw extraction below. Return one entry per index.
 
 ${batch.map(({ q, index }) => `### index ${index}\n${q.rawText}`).join('\n\n')}`
     const { data } = await runAI(userId, 'pdf_structuring', (p) =>
-      p.generateJson({ system: SYSTEM, prompt, jsonSchema, validate: outputSchema, maxTokens: 8000 })
+      p.generateJson({ system: SYSTEM, prompt, jsonSchema, schemaName: 'structured_questions', validate: outputSchema, maxTokens: 8000 })
     )
     for (const item of data.questions) {
       const target = batch.find((b) => b.index === item.index)
@@ -126,7 +127,7 @@ ${batch.map(({ q, index }) => `### index ${index}\n${q.rawText}`).join('\n\n')}`
         questionText: item.questionText.trim(),
         options,
         questionType: item.questionType,
-        subjectName: item.subjectName,
+        subjectName: item.subjectName ?? null,
         raw: item
       })
     }

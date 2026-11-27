@@ -153,11 +153,10 @@ const WEEK_SESSIONS: Array<{
 ]
 
 const SUNDAY_SESSIONS = [
-  { subjectKey: 'math' as const, label: 'Weekly Revision — Mathematics', start: '08:00', end: '10:00', learning: 'Revise all Mathematics topics studied this week', practice: 0, revision: true },
-  { subjectKey: 'science' as const, label: 'Weekly Revision — Physical Science', start: '10:15', end: '12:00', learning: 'Revise all Science topics studied this week', practice: 0, revision: true },
-  { subjectKey: 'reasoning' as const, label: 'Weekly Revision — Reasoning', start: '13:00', end: '14:30', learning: 'Revise all Reasoning topics studied this week', practice: 0, revision: true },
-  { subjectKey: 'current' as const, label: 'Weekly Revision — Current Affairs', start: '15:00', end: '16:00', learning: 'Revise the week’s current affairs', practice: 0, revision: true },
-  { subjectKey: 'math' as const, label: 'Weekly Mock Test', start: '17:00', end: '18:00', learning: 'Full weekly mock test across all four subjects', practice: 30, revision: false }
+  { subjectKey: 'math' as const, label: 'Weekly Revision — Mathematics', start: '08:00', end: '10:00', learning: 'Revise all Mathematics topics studied this week', practice: 0 },
+  { subjectKey: 'science' as const, label: 'Weekly Revision — Physical Science', start: '10:15', end: '12:00', learning: 'Revise all Science topics studied this week', practice: 0 },
+  { subjectKey: 'reasoning' as const, label: 'Weekly Revision — Reasoning', start: '13:00', end: '14:30', learning: 'Revise all Reasoning topics studied this week', practice: 0 },
+  { subjectKey: 'current' as const, label: 'Weekly Revision — Current Affairs', start: '15:00', end: '16:00', learning: 'Revise the week’s current affairs', practice: 0 }
 ]
 
 function buildSchedule(): ScheduleSlot[] {
@@ -165,7 +164,8 @@ function buildSchedule(): ScheduleSlot[] {
 
   for (let weekday = 0; weekday <= 6; weekday += 1) {
     if (weekday === 0) {
-      // Sunday: weekly revision + mock test. These are not learning sessions, so they are never gated.
+      // Sunday: one weekly revision session per subject (the weekly mock test is taken from Tests).
+      // These are not learning sessions, so they are never gated.
       SUNDAY_SESSIONS.forEach((s, index) => {
         const duration = minutesFromTime(s.end) - minutesFromTime(s.start)
         slots.push({
@@ -181,9 +181,9 @@ function buildSchedule(): ScheduleSlot[] {
           learningTarget: s.learning,
           practiceTarget: s.practice,
           reminderEnabled: true,
-          breakAfterMinutes: index === 4 ? 0 : 15,
+          breakAfterMinutes: index === SUNDAY_SESSIONS.length - 1 ? 0 : 15,
           order: index,
-          sessionType: s.revision ? 'revision' : 'mock_test',
+          sessionType: 'revision',
           cycleNumber: null,
           chapterId: null,
           topicIds: [],

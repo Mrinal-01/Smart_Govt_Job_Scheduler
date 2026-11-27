@@ -200,65 +200,11 @@ export function SecuritySection() {
   )
 }
 
-/* ------------------------- Schedule change policy ---------------------- */
-
-export function SchedulePolicySection() {
-  const [data, setData] = useState<{ policy: { maxChanges: number; windowDays: number }; usage: { used: number; remaining: number; nextAvailableAt: string | null; overridesInWindow: number } } | null>(null)
-  const [error, setError] = useState('')
-  useEffect(() => {
-    api<typeof data>('/api/schedule')
-      .then(setData)
-      .catch((err) => setError(errorMessage(err)))
-  }, [])
-  return (
-    <Card>
-      <CardHeader title="Schedule change policy" subtitle="Set by the administrator for discipline — not editable by students" icon={<Repeat size={15} />} />
-      {error ? <div className="callout callout--danger">{error}</div> : null}
-      {!data ? (
-        !error ? <LoadingBlock /> : null
-      ) : (
-        <div className="stack">
-          <ul className="plain-list">
-            <li>
-              <span>Published changes allowed</span>
-              <strong>
-                {data.policy.maxChanges} per rolling {data.policy.windowDays} days
-              </strong>
-            </li>
-            <li>
-              <span>Used now</span>
-              <strong>
-                {data.usage.used} ({data.usage.remaining} remaining)
-              </strong>
-            </li>
-            <li>
-              <span>Next change available</span>
-              <strong>{data.usage.nextAvailableAt ? new Date(data.usage.nextAvailableAt).toLocaleString() : 'Now'}</strong>
-            </li>
-            <li>
-              <span>Emergency overrides in this window</span>
-              <strong>{data.usage.overridesInWindow}</strong>
-            </li>
-          </ul>
-          <div className="callout callout--neutral">
-            Editing an unpublished draft, completing or skipping sessions never counts. The first publish is free. New versions apply from tomorrow (or a later date you
-            choose) so past and current-day sessions are never altered. Emergency overrides are always allowed with a written reason and are recorded in your history.
-          </div>
-        </div>
-      )}
-    </Card>
-  )
-}
-
 /* ------------------------- Revision preferences ------------------------ */
 
 interface CycleSettings {
   subjectIds: string[]
-  defaultRevisionMinutes: number
   revisionMinutesBySubject: Record<string, number>
-  revisionMinutesPerTopic: number
-  maxTopicsPerRevisionBlock: number
-  revisionMandatory: boolean
 }
 
 export function RevisionPreferencesSection() {
@@ -275,7 +221,7 @@ export function RevisionPreferencesSection() {
   const save = async () => {
     setBusy(true)
     try {
-      const r = await api<{ settings: { cycle: CycleSettings } }>('/api/settings', { method: 'PATCH', body: { cycle: { ...cfg, subjectIds: order } } })
+      const r = await api<{ settings: { cycle: CycleSettings } }>('/api/settings', { method: 'PATCH', body: { cycle: { subjectIds: order, revisionMinutesBySubject: cfg.revisionMinutesBySubject } } })
       setCfg(r.settings.cycle)
       notify({ title: 'Revision preferences saved', variant: 'success' })
     } catch (err) {
@@ -294,9 +240,9 @@ export function RevisionPreferencesSection() {
   }
   return (
     <Card>
-      <CardHeader title="Study cycle & revision preferences" subtitle="Used when a new cycle prepares revision before learning" icon={<Repeat size={15} />} />
+      <CardHeader title="Subjects in each cycle" subtitle="Order used by “Generate cycles”; optional revision minutes per subject (blank = default below)" icon={<Repeat size={15} />} />
       <div className="stack">
-        <Field label="Cycle subjects (in order)" hint="Untick a subject to leave it out of cycles.">
+        <Field label="Cycle subjects (in order)" hint="Untick a subject to leave it out of generated cycles.">
           <div className="stack stack--sm">
             {state.subjects.map((s) => {
               const included = order.includes(s.id)
@@ -324,7 +270,7 @@ export function RevisionPreferencesSection() {
                         max={180}
                         style={{ width: 90 }}
                         aria-label={`${s.name} revision minutes`}
-                        placeholder={`${cfg.defaultRevisionMinutes}`}
+                        placeholder="default"
                         value={cfg.revisionMinutesBySubject[s.id] ?? ''}
                         onChange={(e) => {
                           const next = { ...cfg.revisionMinutesBySubject }
@@ -341,23 +287,6 @@ export function RevisionPreferencesSection() {
             })}
           </div>
         </Field>
-        <div className="grid grid--3">
-          <Field label="Default revision block (min)">
-            <Input type="number" min={0} max={180} value={cfg.defaultRevisionMinutes} onChange={(e) => setCfg({ ...cfg, defaultRevisionMinutes: Math.max(0, Math.min(180, Number(e.target.value) || 0)) })} />
-          </Field>
-          <Field label="Suggested time per topic (min)">
-            <Input type="number" min={1} max={60} value={cfg.revisionMinutesPerTopic} onChange={(e) => setCfg({ ...cfg, revisionMinutesPerTopic: Math.max(1, Math.min(60, Number(e.target.value) || 1)) })} />
-          </Field>
-          <Field label="Max topics per revision block" hint="Extra topics wait for the next cycle">
-            <Input type="number" min={1} max={50} value={cfg.maxTopicsPerRevisionBlock} onChange={(e) => setCfg({ ...cfg, maxTopicsPerRevisionBlock: Math.max(1, Math.min(50, Number(e.target.value) || 1)) })} />
-          </Field>
-        </div>
-        <Toggle
-          checked={cfg.revisionMandatory}
-          onChange={(v) => setCfg({ ...cfg, revisionMandatory: v })}
-          label="Revision is mandatory before new learning"
-          description="When off, you may start learning with revision pending; unrevised topics go to the carry-forward queue."
-        />
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <Button variant="primary" icon={<Save size={14} />} loading={busy} onClick={save}>
             Save preferences
@@ -399,7 +328,7 @@ function isValidZone(tz: string) {
 }
 
 export function PlanPreferencesSection() {
-  const { notify } = useStudy()
+  const { notify, updateSettings } = useStudy()
   const [cfg, setCfg] = useState<PlanSettings | null>(null)
   const [holiday, setHoliday] = useState('')
   const [busy, setBusy] = useState(false)
@@ -443,6 +372,8 @@ export function PlanPreferencesSection() {
           plan: cfg.plan
         } })
       setCfg({ timezone: r.settings.timezone, cycle: r.settings.cycle, plan: r.settings.plan })
+      // The header shows the workspace copy of the time zone; keep it equal to the server's study-day zone.
+      updateSettings({ timezone: r.settings.timezone })
       notify({ title: 'Study plan settings saved', variant: 'success' })
     } catch (err) {
       notify({ title: 'Could not save', message: err instanceof ApiError && err.issues.length ? err.issues[0].message : errorMessage(err), variant: 'error' })

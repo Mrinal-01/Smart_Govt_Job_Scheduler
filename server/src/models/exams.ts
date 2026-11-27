@@ -51,6 +51,10 @@ const snapshotSchema = new Schema(
     options: { type: [{ label: String, text: String, _id: false }], default: [] },
     correctAnswer: { type: [String], default: null },
     answerVerified: { type: Boolean, default: false },
+    /** How the stored answer was obtained — shown with the result so the student knows how it was checked. */
+    answerSource: { type: String, default: null },
+    answerConfidence: { type: Number, default: null },
+    answerExplanation: { type: String, default: null },
     explanation: { type: String, default: null },
     subjectId: String,
     subjectName: String,

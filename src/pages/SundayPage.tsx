@@ -1,574 +1,240 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import {
-  BookOpenCheck,
-  CalendarDays,
-  CheckCircle2,
-  Circle,
-  ClipboardList,
-  Clock,
-  FileText,
-  Play,
-  RotateCcw,
-  Sparkles,
-  Target,
-  TrendingUp,
-  XCircle
-} from 'lucide-react'
-import type { Chapter, Subject, Topic } from '../types'
-import { Badge, Button, Card, CardHeader, EmptyState, Modal, Progress, Ring, Tabs, Textarea } from '../components/ui'
-import { useStudy } from '../store/StudyStore'
-import { chapterAccuracy, classifyRevision, logsInRange, subjectProgress, topicMastery } from '../store/selectors'
-import { addDays, formatDuration, formatShortDate, startOfWeek, weekdayOf } from '../lib/date'
-import { cx, sum } from '../lib/utils'
-import { ObligationCard, RevisionWorkspace } from '../components/revision'
-import { planApi, usePlanResource } from '../lib/plan'
+import { AlertTriangle, BookOpenCheck, CalendarDays, CheckCircle2, ClipboardList, Lock, RotateCcw, Target } from 'lucide-react'
+import { Badge, Button, Card, CardHeader, EmptyState, LoadingBlock, Progress } from '../components/ui'
+import { ObligationStateBadge, RevisionWorkspace } from '../components/revision'
+import { planApi, usePlanResource, type Obligation, type WeeklyReview } from '../lib/plan'
+import { WEEKDAY_SHORT, addDays, dateKey, formatDuration, formatShortDate, weekdayOf } from '../lib/date'
+import { cx } from '../lib/utils'
+
+/*
+ * Sunday Review — one flow: revise everything you finished this week.
+ *
+ * The server builds one weekly revision per subject from every topic you FULLY completed on the
+ * week's study days before Sunday (Mon–Sat). It opens on the weekly review day (Sunday by default,
+ * configurable in Settings) and is tracked separately from same-day and next-day revision.
+ */
 
 export default function SundayPage() {
-  const { state, today, logRevision, notify } = useStudy()
   const navigate = useNavigate()
-  const [tab, setTab] = useState<'revision' | 'tests'>('revision')
-  const [active, setActive] = useState<Topic | null>(null)
-  const [notes, setNotes] = useState('')
-
-  /* the "current week" is the Monday-based week containing today */
-  const weekStart = startOfWeek(today, 1)
-  const weekEnd = addDays(weekStart, 6)
-  const isSunday = weekdayOf(today) === 0
-
-  /** topics learnt inside this week, grouped by subject */
-  const weeklyBySubject = useMemo(() => {
-    return state.subjects.map((subject) => {
-      const chapters = state.chapters.filter((c) => c.subjectId === subject.id)
-      const topics: Array<{ topic: Topic; chapter: Chapter }> = []
-      chapters.forEach((chapter) => {
-        chapter.topics.forEach((topic) => {
-          if (!topic.initialLearningDate) return
-          if (topic.initialLearningDate < weekStart || topic.initialLearningDate > weekEnd) return
-          topics.push({ topic, chapter })
-        })
-      })
-      topics.sort((a, b) => (a.topic.initialLearningDate! < b.topic.initialLearningDate! ? -1 : 1))
-      return { subject, topics }
-    })
-  }, [state, weekStart, weekEnd])
-
-  const weekLogs = useMemo(() => logsInRange(state, weekStart, weekEnd), [state, weekStart, weekEnd])
-  const weekMinutes = sum(weekLogs.map((l) => l.actualMinutes))
-  const weekPlanned = sum(weekLogs.map((l) => l.plannedMinutes))
-  const weekRevisions = sum(weekLogs.map((l) => l.revisionsCompleted))
-  const weekSessions = sum(weekLogs.map((l) => l.sessionsCompleted))
-  const weekTests = state.attempts.filter((a) => a.submittedAt.slice(0, 10) >= weekStart && a.submittedAt.slice(0, 10) <= weekEnd)
-
-  const totalWeeklyTopics = sum(weeklyBySubject.map((w) => w.topics.length))
-  const revisedThisWeek = weeklyBySubject.reduce(
-    (acc, w) => acc + w.topics.filter((t) => t.topic.revisions.some((r) => r.date >= weekStart && r.date <= weekEnd)).length,
-    0
-  )
-  const revisionPercent = totalWeeklyTopics ? Math.round((revisedThisWeek / totalWeeklyTopics) * 100) : 0
-
-  const startReview = (topic: Topic) => {
-    setActive(topic)
-    setNotes('')
-  }
-
-  const subjectQuiz = (subject: Subject, chapter?: Chapter) => {
-    const mock = chapter
-      ? state.mockTests.find((m) => m.chapterId === chapter.id)
-      : state.mockTests.find((m) => m.subjectId === subject.id && m.type === 'chapter')
-    if (mock) {
-      navigate('/tests')
-      return
-    }
-    /* fall back to the weekly mixed test */
-    const weekly = state.mockTests.find((m) => m.type === 'weekly')
-    if (weekly) {
-      notify({
-        title: 'No dedicated test for this chapter yet',
-        message: `Opening the ${weekly.title} instead — it includes ${subject.shortName} questions.`,
-        variant: 'info'
-      })
-      navigate('/tests')
-    } else {
-      notify({ title: 'No mock test available', message: 'Mock tests are generated from the demo question bank.', variant: 'warning' })
-    }
-  }
+  const [weekOffset, setWeekOffset] = useState(0)
+  const [openId, setOpenId] = useState<string | null>(null)
+  const { data, error, loading } = usePlanResource(() => planApi.weekly(weekOffset ? addDays(dateKey(), weekOffset * 7) : undefined), [weekOffset])
 
   return (
     <main className="page">
       <div className="page-head">
         <div className="page-head__text">
-          <h1>Sunday — Weekly Revision & Mock Test</h1>
+          <h1>Sunday Review</h1>
           <p className="page-head__sub">
-            Sunday is not a regular learning day. It closes the loop on everything learnt between{' '}
-            <strong>{formatShortDate(weekStart)}</strong> and <strong>{formatShortDate(weekEnd)}</strong>: revise each subject’s topics, review
-            mistakes, and take a chapter-wise test.
+            Revise the whole week in one sitting: every topic you finished from Monday to Saturday, subject by subject, then take the weekly test.
           </p>
         </div>
         <div className="page-head__actions">
-          {!isSunday ? (
-            <Badge tone="neutral" dot>
-              Preview — today is not Sunday
-            </Badge>
-          ) : (
-            <Badge tone="accent" dot>
-              Today is Sunday
-            </Badge>
-          )}
-          <Button variant="secondary" icon={<CalendarDays size={14} />} onClick={() => navigate('/schedule?day=0')}>
-            Sunday schedule
+          <Button variant="secondary" onClick={() => setWeekOffset((w) => w - 1)}>
+            Previous week
+          </Button>
+          <Button variant="secondary" disabled={weekOffset >= 0} onClick={() => setWeekOffset((w) => Math.min(0, w + 1))}>
+            This week
           </Button>
         </div>
       </div>
 
-      <WeeklyRevisionSection />
-
-      {/* ------------------------------- hero ------------------------------- */}
-      <div className="result-hero section">
-        <Ring value={revisionPercent} size={92} stroke={9} tone={revisionPercent >= 80 ? 'var(--success)' : 'var(--accent)'}>
-          <div style={{ textAlign: 'center' }}>
-            <div className="mono" style={{ fontSize: 18, fontWeight: 650, lineHeight: 1 }}>{revisionPercent}%</div>
-            <div style={{ fontSize: 9, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>revised</div>
-          </div>
-        </Ring>
-        <div className="result-grid">
-          <div className="result-cell">
-            <p className="result-cell__value">{totalWeeklyTopics}</p>
-            <p className="result-cell__label">Topics this week</p>
-          </div>
-          <div className="result-cell">
-            <p className="result-cell__value" style={{ color: 'var(--success)' }}>{revisedThisWeek}</p>
-            <p className="result-cell__label">Revised</p>
-          </div>
-          <div className="result-cell">
-            <p className="result-cell__value">{formatDuration(weekMinutes)}</p>
-            <p className="result-cell__label">Studied</p>
-          </div>
-          <div className="result-cell">
-            <p className="result-cell__value">{weekSessions}</p>
-            <p className="result-cell__label">Sessions</p>
-          </div>
-          <div className="result-cell">
-            <p className="result-cell__value">{weekTests.length}</p>
-            <p className="result-cell__label">Mock tests</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="row row--between row--wrap section" style={{ gap: 10 }}>
-        <Tabs
-          value={tab}
-          onChange={(v) => setTab(v)}
-          tabs={[
-            { value: 'revision', label: 'Weekly revision', count: totalWeeklyTopics },
-            { value: 'tests', label: 'Weekly tests', count: weekTests.length }
-          ]}
-        />
-        <span className="text-tertiary" style={{ fontSize: 11.5 }}>
-          {formatDuration(weekPlanned)} planned · {weekRevisions} revisions logged this week
-        </span>
-      </div>
-
-      {tab === 'revision' ? (
-        <div className="grid grid--2 section">
-          {weeklyBySubject.map(({ subject, topics }) => {
-            const p = subjectProgress(state, subject.id)
-            const revised = topics.filter((t) => t.topic.revisions.some((r) => r.date >= weekStart && r.date <= weekEnd)).length
-            const tone = `var(--s-${subject.tone === 'custom' ? 'math' : subject.tone})`
-            return (
-              <div className="sunday-subject" key={subject.id}>
-                <div className="sunday-subject__head">
-                  <span className="subject-dot" style={{ background: tone }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontSize: 13.5, fontWeight: 620 }}>{subject.name}</p>
-                    <p className="text-tertiary" style={{ fontSize: 11 }}>
-                      {topics.length} topics this week · {revised} revised · {p.accuracy}% accuracy
-                    </p>
-                  </div>
-                  <Badge tone={revised === topics.length && topics.length ? 'success' : 'warning'} size="sm">
-                    {topics.length ? `${revised}/${topics.length}` : 'no topics'}
-                  </Badge>
-                  <Button size="sm" variant="secondary" icon={<ClipboardList size={12} />} onClick={() => subjectQuiz(subject)}>
-                    Test
-                  </Button>
-                </div>
-
-                {topics.length ? (
-                  <div className="sunday-subject__list">
-                    {topics.map(({ topic, chapter }) => {
-                      const doneThisWeek = topic.revisions.some((r) => r.date >= weekStart && r.date <= weekEnd)
-                      const wrongQs = state.mistakes.filter((m) => m.topicId === topic.id && m.status !== 'resolved').length
-                      return (
-                        <div key={topic.id} className={cx('week-topic', doneThisWeek && 'is-revised')}>
-                          {doneThisWeek ? (
-                            <CheckCircle2 size={14} style={{ color: 'var(--success)', flexShrink: 0 }} />
-                          ) : (
-                            <Circle size={14} className="text-tertiary" style={{ flexShrink: 0 }} />
-                          )}
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <p className="week-topic__name truncate">{topic.name}</p>
-                            <div className="week-topic__meta">
-                              <span>{chapter.name}</span>
-                              <span>·</span>
-                              <span>learnt {formatShortDate(topic.initialLearningDate!)}</span>
-                              <span>·</span>
-                              <span>mastery {topicMastery(topic)}</span>
-                              {wrongQs ? (
-                                <>
-                                  <span>·</span>
-                                  <span className="text-danger">{wrongQs} wrong</span>
-                                </>
-                              ) : null}
-                            </div>
-                          </div>
-                          <Button
-                            size="sm"
-                            variant={doneThisWeek ? 'ghost' : 'quiet'}
-                            onClick={() => startReview(topic)}
-                          >
-                            {doneThisWeek ? 'Revise again' : 'Mark revised'}
-                          </Button>
-                        </div>
-                      )
-                    })}
-                  </div>
-                ) : (
-                  <div style={{ padding: '14px 16px' }}>
-                    <p className="text-tertiary" style={{ fontSize: 12 }}>
-                      No topics learnt in {subject.shortName} this week — nothing to review.
-                    </p>
-                    <Button size="sm" variant="secondary" style={{ marginTop: 8 }} onClick={() => subjectQuiz(subject)}>
-                      Take a test anyway
-                    </Button>
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      ) : (
-        <div className="stack section">
-          <Card>
-            <CardHeader
-              title="Weekly mock tests"
-              subtitle="Chapter-wise and full-length tests are the Sunday accountability check"
-              icon={<Target size={15} />}
-              actions={
-                <Button size="sm" variant="primary" icon={<Play size={12} />} onClick={() => navigate('/tests')}>
-                  All tests
-                </Button>
-              }
-            />
-            <div className="grid grid--3" style={{ gap: 11 }}>
-              {state.mockTests.map((mock) => {
-                const attempts = weekTests.filter((a) => a.mockId === mock.id)
-                return (
-                  <div key={mock.id} className="mock-card">
-                    <p className="mock-card__title">{mock.title}</p>
-                    <p className="mock-card__desc">{mock.description}</p>
-                    <div className="mock-card__meta">
-                      <Badge tone={mock.type === 'weekly' ? 'accent' : 'neutral'} size="sm">
-                        {mock.type === 'weekly' ? 'Weekly' : 'Chapter'}
-                      </Badge>
-                      <span>{mock.questionIds.length} Qs · {mock.durationMinutes} min</span>
-                    </div>
-                    {attempts.length ? (
-                      <Badge tone="success" size="sm" dot>
-                        Taken this week · {Math.max(...attempts.map((a) => a.accuracy))}% best
-                      </Badge>
-                    ) : (
-                      <Badge tone="warning" size="sm">Not attempted this week</Badge>
-                    )}
-                    <Button variant="primary" size="sm" block icon={<Play size={12} />} onClick={() => navigate('/tests')}>
-                      Start
-                    </Button>
-                  </div>
-                )
-              })}
-            </div>
-          </Card>
-
-          <Card>
-            <CardHeader title="Chapter-wise test suggestions" subtitle="Weakest chapters this week" icon={<TrendingUp size={15} />} />
-            <div className="stack" style={{ gap: 7 }}>
-              {state.chapters
-                .filter((c) => c.topics.some((t) => t.initialLearningDate && t.initialLearningDate >= weekStart && t.initialLearningDate <= weekEnd))
-                .sort((a, b) => chapterAccuracy(a) - chapterAccuracy(b))
-                .slice(0, 6)
-                .map((chapter) => {
-                  const subject = state.subjects.find((s) => s.id === chapter.subjectId)
-                  return (
-                    <div key={chapter.id} className="row row--between" style={{ gap: 10 }}>
-                      <div style={{ minWidth: 0 }}>
-                        <p style={{ fontSize: 12.5, fontWeight: 550 }}>{chapter.name}</p>
-                        <p className="text-tertiary" style={{ fontSize: 10.5 }}>
-                          {subject?.shortName} · accuracy {chapterAccuracy(chapter)}% · {chapter.topics.length} topics
-                        </p>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        icon={<FileText size={12} />}
-                        onClick={() => subject && subjectQuiz(subject, chapter)}
-                      >
-                        Test chapter
-                      </Button>
-                    </div>
-                  )
-                })}
-              {!state.chapters.some((c) => c.topics.some((t) => t.initialLearningDate && t.initialLearningDate >= weekStart && t.initialLearningDate <= weekEnd)) ? (
-                <EmptyState compact icon={<BookOpenCheck size={18} />} title="No chapters studied this week" message="Learn a few topics first, then come back for the Sunday test." />
-              ) : null}
-            </div>
-          </Card>
-
-          {weekTests.length ? (
-            <Card>
-              <CardHeader title="This week’s results" icon={<ClipboardList size={15} />} />
-              <div className="stack" style={{ gap: 8 }}>
-                {weekTests.map((a) => (
-                  <div key={a.id} className="row row--between" style={{ fontSize: 12.5 }}>
-                    <div className="row" style={{ gap: 7, minWidth: 0 }}>
-                      {a.accuracy >= 70 ? (
-                        <CheckCircle2 size={13} style={{ color: 'var(--success)' }} />
-                      ) : (
-                        <XCircle size={13} style={{ color: 'var(--danger)' }} />
-                      )}
-                      <span className="truncate">{a.title}</span>
-                    </div>
-                    <div className="row" style={{ gap: 8 }}>
-                      <span className="mono text-tertiary" style={{ fontSize: 11 }}>
-                        {a.correct}/{a.totalQuestions}
-                      </span>
-                      <Badge tone={a.accuracy >= 75 ? 'success' : a.accuracy >= 55 ? 'warning' : 'danger'} size="sm">
-                        {a.accuracy}%
-                      </Badge>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          ) : null}
-        </div>
-      )}
-
-      {/* --------------------------- revision modal --------------------------- */}
-      <Modal
-        open={Boolean(active)}
-        onClose={() => setActive(null)}
-        title="Weekly revision"
-        subtitle={active ? `${active.name} · ${classifyRevision(active, today)} revision` : undefined}
-        footer={
-          <>
-            <Button onClick={() => setActive(null)}>Cancel</Button>
-            <Button
-              variant="primary"
-              icon={<CheckCircle2 size={14} />}
-              onClick={() => {
-                if (!active) return
-                logRevision(active.id, {
-                  type: 'weekly',
-                  source: 'sunday-review',
-                  notes: notes.trim(),
-                  confidence: active.confidence
-                })
-                notify({ title: 'Weekly revision logged', message: `${active.name} — counted as a weekly revision.`, variant: 'success' })
-                setActive(null)
-              }}
-            >
-              Mark revised
-            </Button>
-          </>
-        }
-      >
-        {active ? (
-          <div className="stack" style={{ gap: 12 }}>
-            <div className="grid grid--3" style={{ gap: 9 }}>
-              <div className="muted-box">
-                <p className="kv__label">Learnt</p>
-                <p style={{ fontSize: 12.5, fontWeight: 600, marginTop: 3 }}>
-                  {active.initialLearningDate ? formatShortDate(active.initialLearningDate) : '—'}
-                </p>
-              </div>
-              <div className="muted-box">
-                <p className="kv__label">Revisions</p>
-                <p className="mono" style={{ fontSize: 15, fontWeight: 650, marginTop: 2 }}>{active.revisions.length}</p>
-              </div>
-              <div className="muted-box">
-                <p className="kv__label">Mastery</p>
-                <p className="mono" style={{ fontSize: 15, fontWeight: 650, marginTop: 2 }}>{topicMastery(active)}</p>
-              </div>
-            </div>
-
-            {active.keyPoints.length ? (
-              <div>
-                <p className="field__label" style={{ marginBottom: 5 }}>Recall checklist</p>
-                <ul className="stack" style={{ gap: 4 }}>
-                  {active.keyPoints.map((k) => (
-                    <li key={k} style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'flex', gap: 6 }}>
-                      <span className="text-tertiary">•</span>
-                      {k}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-
-            {active.formulas.length ? (
-              <div>
-                <p className="field__label" style={{ marginBottom: 5 }}>Formulas</p>
-                <div>
-                  {active.formulas.map((f) => (
-                    <span key={f} className="formula-chip">{f}</span>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {state.mistakes.filter((m) => m.topicId === active.id && m.status !== 'resolved').length ? (
-              <div className="callout callout--warning">
-                <Circle size={13} />
-                <span style={{ fontSize: 11.5 }}>
-                  {state.mistakes.filter((m) => m.topicId === active.id && m.status !== 'resolved').length} unresolved mistake(s) in this topic — resolve
-                  them in the Mistake Bank after revising.
-                </span>
-              </div>
-            ) : null}
-
-            <div>
-              <p className="field__label" style={{ marginBottom: 5 }}>What still feels shaky?</p>
-              <Textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Carry these into next week’s revision…" />
-            </div>
-
-            <Button variant="secondary" block icon={<RotateCcw size={13} />} onClick={() => navigate('/mistakes')}>
-              Open Mistake Bank
-            </Button>
-          </div>
-        ) : null}
-      </Modal>
+      {error ? <div className="callout callout--danger section">{error}</div> : null}
+      {loading && !data ? <LoadingBlock label="Loading this week…" /> : null}
+      {data ? <WeekView data={data} onOpen={setOpenId} onTest={() => navigate('/tests/new')} /> : null}
+      <RevisionWorkspace obligationId={openId} onClose={() => setOpenId(null)} />
     </main>
   )
 }
 
-/* ------------------------------------------------------------------ */
-/* Weekly revision (server-tracked)                                    */
-/* ------------------------------------------------------------------ */
-
-function WeeklyRevisionSection() {
-  const { data, error, loading } = usePlanResource(() => planApi.weekly(), [])
-  const [openId, setOpenId] = useState<string | null>(null)
-  if (error) {
-    return (
-      <Card className="section">
-        <CardHeader title="Weekly revision" icon={<Sparkles size={15} />} />
-        <div className="callout callout--danger">{error}</div>
-      </Card>
-    )
-  }
-  if (loading && !data) {
-    return (
-      <Card className="section">
-        <CardHeader title="Weekly revision" icon={<Sparkles size={15} />} />
-        <p className="text-tertiary">Loading this week’s revision…</p>
-      </Card>
-    )
-  }
-  if (!data) return null
+function WeekView({ data, onOpen, onTest }: { data: WeeklyReview; onOpen: (id: string) => void; onTest: () => void }) {
+  const isDue = data.today >= data.dueDate
   const p = data.progress
-  const sm = data.summary
+  const s = data.summary
+  // Topics grouped per subject, then by the day they were learnt.
+  const bySubject = useMemo(() => new Map(data.topics.map((t) => [t.subjectId, t])), [data.topics])
+
   return (
-    <Card className="section">
-      <CardHeader
-        title="Weekly revision"
-        subtitle={`${formatShortDate(data.weekStart)} – ${formatShortDate(data.weekEnd)} · due ${formatShortDate(data.dueDate)} · ${p.completed}/${p.total} subjects and ${p.topicsRevised}/${p.topicsTotal} topics revised`}
-        icon={<Sparkles size={15} />}
-      />
-      <Progress value={p.completed} max={Math.max(1, p.total)} tone={p.total && p.completed === p.total ? 'success' : 'accent'} height={5} />
-
-      <div className="grid grid--2" style={{ gap: 14, marginTop: 14, alignItems: 'start' }}>
-        <div className="stack" style={{ gap: 8 }}>
-          <p className="queue-label">Subject-wise weekly revision</p>
-          {data.obligations.length ? (
-            <div className="rev-list">
-              {data.obligations.map((o) => (
-                <ObligationCard key={o.id} obligation={o} onOpen={(x) => setOpenId(x.id)} />
-              ))}
-            </div>
-          ) : (
-            <EmptyState compact title="No weekly revision yet" message="Weekly revision is created from learning sessions you complete this week." />
-          )}
-
-          <p className="queue-label">This week’s completed topics</p>
-          {data.topics.length ? (
-            data.topics.map((s) => (
-              <div key={s.subjectId} className="muted-box">
-                <strong style={{ fontSize: 12.5 }}>{s.subjectName}</strong>
-                {s.chapters.map((c) => (
-                  <div key={c.chapterId} style={{ marginTop: 4, fontSize: 12 }}>
-                    <span className="text-secondary">{c.chapterName}: </span>
-                    {c.topics.map((t) => t.topicName).join(', ')}
-                  </div>
-                ))}
-              </div>
-            ))
-          ) : (
-            <p className="text-tertiary" style={{ fontSize: 12 }}>
-              No learning completed this week yet.
-            </p>
-          )}
+    <>
+      <div className="sunday-banner section">
+        <CalendarDays size={18} />
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <strong>
+            Week of {formatShortDate(data.weekStart)} – {formatShortDate(data.dueDate > data.weekStart ? addDays(data.dueDate, -1) : data.weekEnd)}
+          </strong>
+          <div className="text-secondary" style={{ fontSize: 12.5 }}>
+            {isDue
+              ? `Review day is ${formatShortDate(data.dueDate)}. ${p.completed}/${p.total} subjects revised · ${p.topicsRevised}/${p.topicsTotal} topics.`
+              : `Opens on ${WEEKDAY_SHORT[weekdayOf(data.dueDate)]} ${formatShortDate(data.dueDate)}. Topics are added as you finish them during the week.`}
+          </div>
         </div>
-
-        <div className="stack" style={{ gap: 8 }}>
-          <p className="queue-label">
-            Mistake Bank ({data.mistakes.unresolvedMockMistakes.length} mock-test · {data.mistakes.unresolvedBankCount} bank unresolved)
-          </p>
-          {data.mistakes.unresolvedMockMistakes.length || data.mistakes.weekBankMistakes.length ? (
-            <ul className="practice-list">
-              {data.mistakes.weekBankMistakes.map((m) => (
-                <li key={m.id}>
-                  {m.question} <span className="text-tertiary">· Mistake Bank (this week)</span>
-                </li>
-              ))}
-              {data.mistakes.unresolvedMockMistakes.slice(0, 10).map((m) => (
-                <li key={m.id}>
-                  {m.question}{' '}
-                  <span className="text-tertiary">
-                    · {m.topicName ?? m.subjectName ?? 'Mock test'}
-                    {m.inThisWeek ? ' · this week' : ''}
-                    {m.occurrences > 1 ? ` · ${m.occurrences}×` : ''}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-tertiary" style={{ fontSize: 12 }}>
-              No unresolved mistakes.
-            </p>
-          )}
-
-          <p className="queue-label">Weak topics to revise</p>
-          {data.weakTopics.length ? (
-            <ul className="practice-list">
-              {data.weakTopics.map((t) => (
-                <li key={t.topicId}>
-                  {t.topicName} <span className="text-tertiary">· {t.chapterName}</span>
-                  {t.accuracy !== null ? <span className="text-danger"> · {t.accuracy}%</span> : null}
-                  {t.mistakeCount ? <span className="text-tertiary"> · {t.mistakeCount} mistakes</span> : null}
-                  {t.inThisWeek ? <Badge size="sm" tone="info"> this week</Badge> : null}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-tertiary" style={{ fontSize: 12 }}>
-              No weak topics detected.
-            </p>
-          )}
-          {sm.revisionAccuracy !== null ? <p className="stat__hint">Revision practice accuracy this week: {sm.revisionAccuracy}%</p> : null}
+        <div style={{ minWidth: 160 }}>
+          <Progress value={p.completed} max={Math.max(1, p.total)} tone={p.total && p.completed === p.total ? 'success' : 'accent'} height={6} />
         </div>
       </div>
-      <RevisionWorkspace obligationId={openId} onClose={() => setOpenId(null)} />
-    </Card>
+
+      <div className="grid grid--aside">
+        <div className="stack">
+          <Card>
+            <CardHeader title="1 · Revise each subject" subtitle="Only topics you fully completed this week" icon={<RotateCcw size={15} />} />
+            {data.obligations.length ? (
+              <div className="stack" style={{ gap: 10 }}>
+                {data.obligations.map((o) => (
+                  <SubjectWeek key={o.id} obligation={o} days={bySubject.get(o.subjectId)} isDue={isDue} onOpen={onOpen} />
+                ))}
+              </div>
+            ) : (
+              <EmptyState
+                icon={<BookOpenCheck size={20} />}
+                title="Nothing to revise yet"
+                message="Finish learning sessions on My Schedule during the week — every topic you fully complete is added here automatically."
+              />
+            )}
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="2 · Weekly test"
+              subtitle={data.mockTests.count ? `${data.mockTests.count} test(s) this week${data.mockTests.averageAccuracy !== null ? ` · average ${data.mockTests.averageAccuracy}%` : ''}` : 'Check the week with a mixed test from the question hub'}
+              icon={<ClipboardList size={15} />}
+              actions={
+                <Button size="sm" variant="primary" icon={<Target size={13} />} onClick={onTest}>
+                  Build weekly test
+                </Button>
+              }
+            />
+            {data.mockTests.tests.length ? (
+              <ul className="plain-list">
+                {data.mockTests.tests.map((t) => (
+                  <li key={t.id}>
+                    <span>{t.name}</span>
+                    <strong>{t.accuracy !== null ? `${t.accuracy}%` : '—'}</strong>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </Card>
+        </div>
+
+        <div className="stack">
+          <Card>
+            <CardHeader title="This week" icon={<CalendarDays size={15} />} />
+            <ul className="plain-list">
+              <li>
+                <span>Learning sessions done</span>
+                <strong>
+                  {s.learningSessionsCompleted}/{s.learningSessionsPlanned}
+                </strong>
+              </li>
+              <li>
+                <span>Missed / skipped</span>
+                <strong>
+                  {s.missed} / {s.skipped}
+                </strong>
+              </li>
+              <li>
+                <span>Learning time</span>
+                <strong>{formatDuration(s.learningMinutes)}</strong>
+              </li>
+              <li>
+                <span>Revision time</span>
+                <strong>{formatDuration(s.revisionMinutes)}</strong>
+              </li>
+              <li>
+                <span>Revisions (same-day · next-day · weekly)</span>
+                <strong>
+                  {s.revisionsCompleted.same_day} · {s.revisionsCompleted.next_day} · {s.revisionsCompleted.weekly}
+                </strong>
+              </li>
+            </ul>
+          </Card>
+
+          <Card>
+            <CardHeader title="Weak spots to look at" subtitle="Low accuracy or repeated mistakes" icon={<AlertTriangle size={15} />} />
+            {data.weakTopics.length || data.mistakes.unresolvedMockMistakes.length ? (
+              <ul className="plain-list">
+                {data.weakTopics.slice(0, 6).map((t) => (
+                  <li key={t.topicId}>
+                    <span>
+                      {t.topicName} <span className="text-tertiary">· {t.chapterName}</span>
+                    </span>
+                    <strong className="text-danger">{t.accuracy !== null ? `${t.accuracy}%` : `${t.mistakeCount} mistakes`}</strong>
+                  </li>
+                ))}
+                {data.mistakes.unresolvedMockMistakes.slice(0, 4).map((m) => (
+                  <li key={m.id}>
+                    <span className="truncate">{m.question}</span>
+                    <Badge size="sm" tone="danger">
+                      {m.occurrences}× wrong
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-tertiary" style={{ fontSize: 12.5 }}>
+                No weak spots recorded yet.
+              </p>
+            )}
+          </Card>
+        </div>
+      </div>
+    </>
   )
 }
 
-export { Clock, Progress }
+function SubjectWeek({
+  obligation: o,
+  days,
+  isDue,
+  onOpen
+}: {
+  obligation: Obligation
+  days: WeeklyReview['topics'][number] | undefined
+  isDue: boolean
+  onOpen: (id: string) => void
+}) {
+  // Day → topics learnt that day (Mon … Sat).
+  const perDay = new Map<string, string[]>()
+  for (const ch of days?.chapters ?? []) for (const t of ch.topics) for (const d of t.dates) perDay.set(d, [...(perDay.get(d) ?? []), t.topicName])
+  const dates = Array.from(perDay.keys()).sort()
+  const done = o.status === 'completed'
+  return (
+    <div className={cx('week-subject', done && 'is-done')}>
+      <div className="row row--between row--wrap" style={{ gap: 8 }}>
+        <div className="row" style={{ gap: 8 }}>
+          {done ? <CheckCircle2 size={16} className="text-success" /> : <RotateCcw size={15} className="text-tertiary" />}
+          <strong>{o.subjectName}</strong>
+          <span className="text-tertiary" style={{ fontSize: 12 }}>
+            {o.topics.length} topic{o.topics.length === 1 ? '' : 's'} · {formatDuration(o.plannedMinutes)}
+          </span>
+          <ObligationStateBadge obligation={o} />
+        </div>
+        {isDue || done ? (
+          <Button size="sm" variant={done ? 'ghost' : 'primary'} onClick={() => onOpen(o.id)}>
+            {done ? 'View' : o.status === 'in_progress' ? 'Continue' : 'Revise'}
+          </Button>
+        ) : (
+          <span className="row text-tertiary" style={{ gap: 5, fontSize: 12 }}>
+            <Lock size={12} /> opens on review day
+          </span>
+        )}
+      </div>
+      <div className="week-subject__days">
+        {dates.map((d) => (
+          <div key={d} className="week-subject__day">
+            <span className="week-subject__dayname">
+              {WEEKDAY_SHORT[weekdayOf(d)]} {formatShortDate(d)}
+            </span>
+            <span>{perDay.get(d)!.join(', ')}</span>
+          </div>
+        ))}
+      </div>
+      {o.result ? (
+        <p className="text-tertiary" style={{ fontSize: 11.5, marginTop: 4 }}>
+          {o.result.questionsCorrect}/{o.result.questionsAttempted} correct · confidence {o.result.confidence}/5 · {formatDuration(o.result.actualMinutes)}
+        </p>
+      ) : null}
+    </div>
+  )
+}

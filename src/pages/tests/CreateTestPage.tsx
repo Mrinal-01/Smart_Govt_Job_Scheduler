@@ -53,7 +53,7 @@ export default function CreateTestPage() {
             <ArrowLeft size={13} /> Test builder
           </Link>
           <h1>Create a mock test</h1>
-          <p className="page-head__sub">Build a timed test from your verified question bank — optionally adding a question-paper PDF first.</p>
+          <p className="page-head__sub">Build a timed test from the shared question hub — optionally adding your own question-paper PDF to it first.</p>
         </div>
       </div>
       <ol className="wizard-steps" aria-label="Steps">
@@ -144,11 +144,12 @@ function SourceStep({ type, onBack, onNext }: { type: BuildType; onBack: () => v
 
   const upload = async () => {
     if (!file) return
+    if (!subjects.length) return setError('Choose the subject(s) this paper covers — the hub files questions by subject.')
     setError('')
     await flush()
     const form = new FormData()
     form.append('mockType', type)
-    if (subjects.length) form.append('subjectIds', subjects.join(','))
+    form.append('subjectIds', subjects.join(','))
     form.append('file', file)
     setProgress(0)
     handle.current = uploadWithProgress('/api/documents', form, setProgress)
@@ -167,7 +168,11 @@ function SourceStep({ type, onBack, onNext }: { type: BuildType; onBack: () => v
   return (
     <div className="grid grid--aside">
       <Card>
-        <CardHeader title="Step 2 — Add questions from a PDF (optional)" subtitle="Text PDFs are read directly; scanned PDFs need OCR on the server." icon={<FileUp size={15} />} />
+        <CardHeader
+          title="Step 2 — Add a question paper to the hub (optional)"
+          subtitle="Questions are added to the shared hub. Ones without an answer key are answered by AI in the background. Text PDFs are read directly; scanned PDFs need OCR."
+          icon={<FileUp size={15} />}
+        />
         <div className="stack">
           <label className={cx('dropzone', file && 'has-file')}>
             <input type="file" accept="application/pdf,.pdf" onChange={(e) => choose(e.target.files?.[0])} disabled={progress !== null} />
@@ -182,7 +187,7 @@ function SourceStep({ type, onBack, onNext }: { type: BuildType; onBack: () => v
               </span>
             )}
           </label>
-          <Field label="Subjects in this PDF" hint="If the paper covers one subject, pick it so questions are tagged automatically.">
+          <Field label="Subjects in this PDF" required hint="Pick one subject if the paper covers only one — every question is then filed under it automatically.">
             <div className="pill-row">
               {state.subjects.map((s) => (
                 <button
@@ -223,13 +228,14 @@ function SourceStep({ type, onBack, onNext }: { type: BuildType; onBack: () => v
               <ProcessingStatus doc={doc} />
               {doc.status === 'completed' ? (
                 <p className="text-secondary">
-                  {doc.stats.questionsFound} questions found · {doc.stats.inserted} new · {doc.stats.needsReview} need review
+                  {doc.stats.questionsFound} questions found · {doc.stats.inserted} new in the hub · {doc.stats.duplicates} already there
+                  {doc.stats.pendingAnswer ? ` · ${doc.stats.pendingAnswer} waiting for an AI answer` : ''} · {doc.stats.needsReview} need review
                 </p>
               ) : null}
               {doc.error ? <div className="callout callout--danger">{doc.error}</div> : null}
               {doc.status === 'completed' ? (
                 <Button variant="primary" icon={<CheckCircle2 size={14} />} onClick={() => navigate(`/tests/documents/${doc._id}?type=${type}`)}>
-                  Review & verify questions
+                  Review questions
                 </Button>
               ) : null}
             </div>
@@ -240,12 +246,12 @@ function SourceStep({ type, onBack, onNext }: { type: BuildType; onBack: () => v
             </Button>
             <div className="row" style={{ gap: 8 }}>
               {file && !doc ? (
-                <Button variant="primary" icon={<Upload size={14} />} loading={progress !== null} onClick={upload}>
+                <Button variant="primary" icon={<Upload size={14} />} loading={progress !== null} disabled={!subjects.length} onClick={upload}>
                   Upload & extract
                 </Button>
               ) : null}
               <Button icon={<Library size={14} />} iconRight={<ArrowRight size={14} />} onClick={onNext}>
-                {doc ? 'Configure with verified questions' : 'Skip — use my question bank'}
+                {doc ? 'Configure the test' : 'Skip — use the question hub'}
               </Button>
             </div>
           </div>
@@ -295,6 +301,14 @@ function ConfigureStep({ type, onBack }: { type: BuildType; onBack: () => void }
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const set = <K extends keyof Config>(k: K, v: Config[K]) => setCfg((c) => ({ ...c, [k]: v }))
+  // Ready questions per subject in the shared hub (matched to this student's subjects by name).
+  const [hub, setHub] = useState<Record<string, { ready: number; pendingAnswer: number }>>({})
+  useEffect(() => {
+    api<{ subjects: Array<{ subjectId: string; ready: number; pendingAnswer: number }> }>('/api/questions/hub-summary')
+      .then((r) => setHub(Object.fromEntries(r.subjects.map((x) => [x.subjectId, { ready: x.ready, pendingAnswer: x.pendingAnswer }]))))
+      .catch(() => undefined)
+  }, [])
+  const readyLabel = (id: string) => (hub[id] ? ` · ${hub[id].ready} ready` : '')
 
   const usesDistribution = type === 'full_mixed' || type === 'sectional'
   const distributionSubjects = useMemo(() => (type === 'full_mixed' ? state.subjects.map((s) => s.id) : cfg.subjectIds), [type, state.subjects, cfg.subjectIds])
@@ -378,6 +392,7 @@ function ConfigureStep({ type, onBack }: { type: BuildType; onBack: () => void }
                 {state.subjects.map((s) => (
                   <button key={s.id} type="button" className={cx('chip-filter', cfg.subjectIds.includes(s.id) && 'is-active')} onClick={() => toggle('subjectIds', s.id, type === 'subject_full')}>
                     {s.name}
+                    <span className="chip-filter__count">{readyLabel(s.id)}</span>
                   </button>
                 ))}
               </div>
@@ -411,7 +426,10 @@ function ConfigureStep({ type, onBack }: { type: BuildType; onBack: () => void }
               <div className="distribution">
                 {distributionSubjects.map((id) => (
                   <label key={id} className="distribution__row">
-                    <span>{state.subjects.find((s) => s.id === id)?.name}</span>
+                    <span>
+                      {state.subjects.find((s) => s.id === id)?.name}
+                      <span className="text-tertiary">{readyLabel(id)}</span>
+                    </span>
                     <Input
                       type="number"
                       min={0}
@@ -501,7 +519,7 @@ function ConfigureStep({ type, onBack }: { type: BuildType; onBack: () => void }
         </div>
       </Card>
       <Card>
-        <CardHeader title="Availability in your bank" subtitle="Only verified questions are used" />
+        <CardHeader title="Availability in the question hub" subtitle="Only ready questions (with a trusted answer) are used" />
         {localProblems.length ? (
           <ul className="plain-list">
             {localProblems.map((p) => (
@@ -544,7 +562,10 @@ function ConfigureStep({ type, onBack }: { type: BuildType; onBack: () => void }
             ) : (
               <div className="callout callout--warning">
                 <AlertTriangle size={14} />
-                <span>Not enough verified questions. Reduce the count, change the selection, or verify more questions — a short test is never created silently.</span>
+                <span>
+                  Not enough ready questions. Reduce the count, change the selection, or upload more question papers for this subject — a short test is never created
+                  silently.
+                </span>
               </div>
             )}
           </div>

@@ -12,7 +12,9 @@ const uploadedDocumentSchema = new Schema(
     pageCount: { type: Number, default: 0 },
     intent: {
       mockType: { type: String, default: null },
-      subjectIds: { type: [String], default: [] }
+      /** Subjects chosen at upload (ids in the uploader's curriculum, names for the shared hub). */
+      subjectIds: { type: [String], default: [] },
+      subjectNames: { type: [String], default: [] }
     },
     status: { type: String, enum: ['uploaded', 'queued', 'processing', 'completed', 'failed'], default: 'uploaded' },
     stage: { type: String, default: 'uploaded' },
@@ -27,6 +29,10 @@ const uploadedDocumentSchema = new Schema(
       inserted: { type: Number, default: 0 },
       duplicates: { type: Number, default: 0 },
       needsReview: { type: Number, default: 0 },
+      /** Questions with no answer key, handed to background AI answering. */
+      pendingAnswer: { type: Number, default: 0 },
+      /** Duplicates whose missing answer this PDF's answer key filled in. */
+      answersFilled: { type: Number, default: 0 },
       textPages: { type: Number, default: 0 },
       ocrPages: { type: Number, default: 0 },
       ocrUnavailablePages: { type: Number, default: 0 },
@@ -49,9 +55,14 @@ export const UploadedDocument = mongoose.model('UploadedDocument', uploadedDocum
 
 const processingJobSchema = new Schema(
   {
-    type: { type: String, enum: ['process_document'], required: true },
-    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    documentId: { type: Schema.Types.ObjectId, ref: 'UploadedDocument', required: true },
+    type: { type: String, enum: ['process_document', 'answer_questions'], required: true },
+    userId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    documentId: { type: Schema.Types.ObjectId, ref: 'UploadedDocument', default: null },
+    /** answer_questions: the hub questions to solve in one AI call. */
+    questionIds: { type: [Schema.Types.ObjectId], ref: 'Question', default: [] },
+    /** answer_questions: re-check reported answers instead of answering fresh ones. */
+    recheck: { type: Boolean, default: false },
+    note: { type: String, default: null },
     status: { type: String, enum: ['queued', 'running', 'completed', 'failed'], default: 'queued' },
     attempts: { type: Number, default: 0 },
     maxAttempts: { type: Number, default: 3 },

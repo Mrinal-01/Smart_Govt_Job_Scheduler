@@ -73,11 +73,11 @@ export default function ExamMistakesPanel() {
           ]}
         />
         <span className="text-tertiary" style={{ fontSize: 12 }}>
-          Only questions with a verified answer are added automatically.
+          Only questions with a trusted answer are added automatically.
         </span>
       </div>
       {!visible.length ? (
-        <EmptyState compact title={items.length ? 'Nothing in this view' : 'No mistakes from PDF mock tests yet'} message="Wrong answers on verified questions appear here after each test." />
+        <EmptyState compact title={items.length ? 'Nothing in this view' : 'No mistakes from PDF mock tests yet'} message="Wrong answers on questions with a trusted answer appear here after each test." />
       ) : (
         <div className="stack">
           {visible.map((m) => {

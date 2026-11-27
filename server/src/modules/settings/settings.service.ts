@@ -12,11 +12,7 @@ export function serializeSettings(doc: Awaited<ReturnType<typeof getSettings>>) 
     timezone: doc.timezone,
     cycle: {
       subjectIds: doc.cycle?.subjectIds ?? [],
-      defaultRevisionMinutes: doc.cycle?.defaultRevisionMinutes ?? 10,
       revisionMinutesBySubject: byS instanceof Map ? Object.fromEntries(byS) : (byS ?? {}),
-      revisionMinutesPerTopic: doc.cycle?.revisionMinutesPerTopic ?? 3,
-      maxTopicsPerRevisionBlock: doc.cycle?.maxTopicsPerRevisionBlock ?? 5,
-      revisionMandatory: doc.cycle?.revisionMandatory ?? true,
       cyclesPerDay: doc.cycle?.cyclesPerDay ?? 2,
       sessionMinutes: doc.cycle?.sessionMinutes ?? 60,
       breakMinutes: doc.cycle?.breakMinutes ?? 10

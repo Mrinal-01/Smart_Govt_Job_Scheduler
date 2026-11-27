@@ -13,10 +13,10 @@
     "migrate:import-local": "tsx src/scripts/importLocalBackup.ts",
     "admin:promote": "tsx src/scripts/promoteAdmin.ts",
     "seed:master": "tsx scripts/seed-master-account.mts",
-    "user:set-phone": "tsx src/scripts/setUserPhone.ts"
+    "user:set-phone": "tsx src/scripts/setUserPhone.ts",
+    "db:upgrade": "tsx scripts/db-upgrade.mts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^1.14.0",
     "@node-rs/argon2": "^2.2.2",
     "canvas": "file:./vendor/canvas-stub",
     "cookie-parser": "^1.4.7",

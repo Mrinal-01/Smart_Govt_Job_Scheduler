@@ -40,25 +40,22 @@ import {
 } from '../components/ui'
 import { useStudy } from '../store/StudyStore'
 import { useAuth } from '../auth/AuthContext'
-import { AccountSection, AiUsageSection, PlanPreferencesSection, RevisionPreferencesSection, SchedulePolicySection, SecuritySection } from './settings/AccountSections'
+import { AccountSection, AiUsageSection, PlanPreferencesSection, RevisionPreferencesSection, SecuritySection } from './settings/AccountSections'
 import { reminderAudio, notifySupported, requestNotificationPermission } from '../services/audio'
 import { downloadCSV, downloadJSON } from '../lib/utils'
 import { formatDuration } from '../lib/date'
 import { cx } from '../lib/utils'
 import { formatPhone } from '../lib/phone'
 
-type Section = 'account' | 'security' | 'profile' | 'study' | 'schedule' | 'policy' | 'revision' | 'reminders' | 'ai' | 'appearance' | 'data'
+type Section = 'account' | 'profile' | 'study' | 'revision' | 'reminders' | 'ai' | 'appearance' | 'data'
 
 const SECTIONS: Array<{ key: Section; label: string; icon: React.ReactNode }> = [
-  { key: 'account', label: 'Account', icon: <UserCog size={14} /> },
-  { key: 'security', label: 'Security & sessions', icon: <ShieldCheck size={14} /> },
+  { key: 'account', label: 'Account & security', icon: <UserCog size={14} /> },
   { key: 'profile', label: 'Profile & exam', icon: <User size={14} /> },
   { key: 'study', label: 'Study targets', icon: <GraduationCap size={14} /> },
-  { key: 'schedule', label: 'Schedule defaults', icon: <Clock size={14} /> },
-  { key: 'policy', label: 'Schedule change policy', icon: <Repeat size={14} /> },
-  { key: 'revision', label: 'Revision preferences', icon: <Repeat size={14} /> },
-  { key: 'reminders', label: 'Notifications & reminders', icon: <BellRing size={14} /> },
-  { key: 'ai', label: 'AI & test settings', icon: <Bot size={14} /> },
+  { key: 'revision', label: 'Study cycles & revision', icon: <Repeat size={14} /> },
+  { key: 'reminders', label: 'Reminders & sound', icon: <BellRing size={14} /> },
+  { key: 'ai', label: 'AI & tests', icon: <Bot size={14} /> },
   { key: 'appearance', label: 'Appearance', icon: <Palette size={14} /> },
   { key: 'data', label: 'Data & backup', icon: <Database size={14} /> }
 ]
@@ -82,7 +79,6 @@ export default function SettingsPage() {
     updateProfile,
     updateSettings,
     updateReminder,
-    resetDemoData,
     importData,
     simulateOverdue,
     notify
@@ -90,18 +86,19 @@ export default function SettingsPage() {
 
   const { user } = useAuth()
   const [params, setParams] = useSearchParams()
+  const LEGACY: Record<string, Section> = { security: 'account', policy: 'revision', schedule: 'revision' }
   const isSection = (v: string | null): v is Section => SECTIONS.some((x) => x.key === v)
-  const [section, setSectionState] = useState<Section>(() => (isSection(params.get('section')) ? (params.get('section') as Section) : 'account'))
+  const sectionFrom = (v: string | null): Section => (isSection(v) ? v : v && LEGACY[v] ? LEGACY[v] : 'account')
+  const [section, setSectionState] = useState<Section>(() => sectionFrom(params.get('section')))
   useEffect(() => {
     const p = params.get('section')
-    if (isSection(p)) setSectionState(p)
+    if (p) setSectionState(sectionFrom(p))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params])
   const setSection = (s: Section) => {
     setSectionState(s)
     setParams({ section: s }, { replace: true })
   }
-  const [confirmReset, setConfirmReset] = useState(false)
   const [permission, setPermission] = useState<string>(() =>
     notifySupported() ? Notification.permission : 'unsupported'
   )
@@ -173,9 +170,12 @@ export default function SettingsPage() {
         </nav>
 
         <div className="stack">
-          {section === 'account' ? <AccountSection /> : null}
-          {section === 'security' ? <SecuritySection /> : null}
-          {section === 'policy' ? <SchedulePolicySection /> : null}
+          {section === 'account' ? (
+            <div className="stack">
+              <AccountSection />
+              <SecuritySection />
+            </div>
+          ) : null}
           {section === 'revision' ? (
             <div className="stack">
               <RevisionPreferencesSection />
@@ -211,13 +211,6 @@ export default function SettingsPage() {
                     onChange={(e) => updateProfile({ examDate: e.target.value || null })}
                   />
                 </Field>
-                <Field label="Timezone" hint="Default for this product is Asia/Kolkata">
-                  <Select value={s.timezone} onChange={(e) => updateSettings({ timezone: e.target.value })}>
-                    <option value="Asia/Kolkata">Asia/Kolkata (IST)</option>
-                    <option value="Asia/Dubai">Asia/Dubai</option>
-                    <option value="UTC">UTC</option>
-                  </Select>
-                </Field>
               </div>
               <div className="row" style={{ justifyContent: 'flex-end', marginTop: 14 }}>
                 <Button
@@ -241,23 +234,6 @@ export default function SettingsPage() {
           {section === 'study' ? (
             <Card>
               <CardHeader title="Study targets" subtitle="Consistency and readiness are measured against these targets" icon={<GraduationCap size={15} />} />
-              <div className="settings-row">
-                <div>
-                  <p className="settings-row__label">Daily study target</p>
-                  <p className="settings-row__hint">Minutes of focused study per weekday. Currently {formatDuration(s.dailyTargetMinutes)}.</p>
-                </div>
-                <div className="settings-row__control">
-                  <Input
-                    type="number"
-                    min={30}
-                    max={900}
-                    step={15}
-                    value={s.dailyTargetMinutes}
-                    onChange={(e) => updateSettings({ dailyTargetMinutes: Number(e.target.value) || 450 })}
-                  />
-                  <span className="text-tertiary" style={{ fontSize: 11.5 }}>min</span>
-                </div>
-              </div>
               <div className="settings-row">
                 <div>
                   <p className="settings-row__label">Weekly study target</p>
@@ -302,69 +278,9 @@ export default function SettingsPage() {
                   </div>
                 </div>
               </div>
-              <div className="settings-row">
-                <div>
-                  <p className="settings-row__label">Auto-suggest unresolved mistakes</p>
-                  <p className="settings-row__hint">Include open Mistake Bank entries inside the revision preparation panel.</p>
-                </div>
-                <div className="settings-row__control">
-                  <Toggle
-                    checked={s.autoSuggestMistakes}
-                    onChange={(v) => updateSettings({ autoSuggestMistakes: v })}
-                    label="Auto-suggest mistakes"
-                  />
-                </div>
-              </div>
-              <div className="settings-row">
-                <div>
-                  <p className="settings-row__label">Confirm before skipping</p>
-                  <p className="settings-row__hint">Require a written reason whenever a session or its revision is skipped.</p>
-                </div>
-                <div className="settings-row__control">
-                  <Toggle
-                    checked={s.confirmBeforeSkip}
-                    onChange={(v) => updateSettings({ confirmBeforeSkip: v })}
-                    label="Confirm before skipping"
-                  />
-                </div>
-              </div>
             </Card>
           ) : null}
 
-          {section === 'schedule' ? (
-            <Card>
-              <CardHeader title="Schedule defaults" subtitle="The weekly builder on /schedule is the source of truth — these are defaults only" icon={<Clock size={15} />} />
-              <div className="callout callout--info" style={{ marginBottom: 12 }}>
-                <Settings2 size={14} />
-                <span>
-                  Default study week is <strong>Monday–Saturday</strong> with 8 sessions across four subjects. <strong>Sunday</strong> is reserved for
-                  weekly revision and mock tests. Multiple sessions per subject per day are always allowed.
-                </span>
-              </div>
-              <div className="grid grid--2" style={{ gap: 12 }}>
-                <div className="muted-box">
-                  <p className="kv__label">Sessions per weekday</p>
-                  <p className="mono" style={{ fontSize: 18, fontWeight: 650 }}>
-                    {state.schedule.filter((x) => x.weekday === 1).length}
-                  </p>
-                  <p className="stat__hint">Monday baseline</p>
-                </div>
-                <div className="muted-box">
-                  <p className="kv__label">Sunday sessions</p>
-                  <p className="mono" style={{ fontSize: 18, fontWeight: 650 }}>
-                    {state.schedule.filter((x) => x.weekday === 0).length}
-                  </p>
-                  <p className="stat__hint">revision + mock</p>
-                </div>
-              </div>
-              <div className="callout callout--neutral" style={{ marginTop: 12 }}>
-                <AlertTriangle size={13} />
-                <span style={{ fontSize: 11.5 }}>
-                  Changing a schedule never rewrites earlier history: completed sessions are stored against their original date and slot.
-                </span>
-              </div>
-            </Card>
-          ) : null}
 
           {section === 'reminders' ? (
             <>
@@ -388,20 +304,6 @@ export default function SettingsPage() {
                     onChange={(v) => updateReminder({ quietMode: v })}
                     label="Quiet mode / emergency pause"
                     description="Silences every reminder without deleting reminder history. Sessions still become overdue."
-                  />
-                  <div className="divider" style={{ margin: 0 }} />
-                  <Toggle
-                    checked={r.notifySessionEnd}
-                    onChange={(v) => updateReminder({ notifySessionEnd: v })}
-                    label="Notify at session end"
-                    description="Marks the session as awaiting completion before it becomes overdue."
-                  />
-                  <div className="divider" style={{ margin: 0 }} />
-                  <Toggle
-                    checked={r.notifyRevisionDue}
-                    onChange={(v) => updateReminder({ notifyRevisionDue: v })}
-                    label="Notify about due revisions"
-                    description="Highlights same-day and overdue revisions in the header bell."
                   />
                 </div>
               </Card>
@@ -725,66 +627,11 @@ export default function SettingsPage() {
                 </Button>
               </Card>
 
-              <Card>
-                <CardHeader title="Demo data" subtitle="A full 365-day dataset is stored in localStorage" icon={<Database size={15} />} />
-                <div className="grid grid--4" style={{ gap: 10, marginBottom: 12 }}>
-                  <div className="muted-box">
-                    <p className="kv__label">Subjects</p>
-                    <p className="mono" style={{ fontSize: 17, fontWeight: 650 }}>{state.subjects.length}</p>
-                  </div>
-                  <div className="muted-box">
-                    <p className="kv__label">Chapters</p>
-                    <p className="mono" style={{ fontSize: 17, fontWeight: 650 }}>{state.chapters.length}</p>
-                  </div>
-                  <div className="muted-box">
-                    <p className="kv__label">Logged days</p>
-                    <p className="mono" style={{ fontSize: 17, fontWeight: 650 }}>{state.logs.length}</p>
-                  </div>
-                  <div className="muted-box">
-                    <p className="kv__label">Mistakes</p>
-                    <p className="mono" style={{ fontSize: 17, fontWeight: 650 }}>{state.mistakes.length}</p>
-                  </div>
-                </div>
-                <div className="callout callout--warning" style={{ marginBottom: 12 }}>
-                  <AlertTriangle size={13} />
-                  <span style={{ fontSize: 11.5 }}>
-                    Resetting restores the generated demo dataset and discards every interaction you have made (session logs, revisions, mistakes, mock
-                    attempts).
-                  </span>
-                </div>
-                <Button variant="danger" icon={<RotateCcw size={14} />} onClick={() => setConfirmReset(true)}>
-                  Reset demo data
-                </Button>
-              </Card>
-
-              <Card>
-                <CardHeader title="Prototype limitations" icon={<AlertTriangle size={15} />} />
-                <ul className="stack" style={{ gap: 6, fontSize: 11.5, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-                  <li>• Study data is saved to your account on the server; this browser keeps an offline copy.</li>
-                  <li>• Reminders run only while this tab is open — background push needs a service worker + server scheduler (not implemented).</li>
-                  <li>• The built-in assistant modes are rules-based; live AI answers need the server AI provider to be configured.</li>
-                  <li>• Demo MCQs are practice questions, not official previous-year papers.</li>
-                </ul>
-              </Card>
             </>
           ) : null}
         </div>
       </div>
 
-      <ConfirmDialog
-        open={confirmReset}
-        onClose={() => setConfirmReset(false)}
-        title="Reset all demo data?"
-        message="Your session logs, revision history, mistakes and mock attempts will be permanently replaced with a freshly generated 365-day demo dataset."
-        confirmLabel="Reset everything"
-        requireReason
-        reasonLabel="Type a reason to confirm"
-        reasonPlaceholder="e.g. Starting fresh"
-        onConfirm={() => {
-          resetDemoData()
-          setName(state.profile.name)
-        }}
-      />
     </main>
   )
 }

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   ArrowDown,
   ArrowUp,
@@ -223,7 +223,7 @@ export default function SchedulePage() {
           <Card>
             <CardHeader
               title={`${WEEKDAY_LONG[weekday]} schedule`}
-              subtitle={`${slots.length} sessions · ${formatDuration(totalMinutes)} total${isSunday ? ' · weekly revision + mock test day' : ''}${
+              subtitle={`${slots.length} sessions · ${formatDuration(totalMinutes)} total${isSunday ? ' · whole-week revision day' : ''}${
                 isTodayTab ? ` · live status for today (v${planToday?.scheduleVersion ?? '—'})` : ''
               }`}
               icon={<CalendarDays size={15} />}
@@ -259,8 +259,8 @@ export default function SchedulePage() {
               <div className="callout callout--info" style={{ marginBottom: 12 }}>
                 <Info size={14} />
                 <span>
-                  Sunday is dedicated to <strong>weekly revision and chapter-wise mock tests</strong>, not new learning. Weekly revision obligations are tracked separately in Sunday
-                  Review.
+                  Sunday is for <strong>revising the whole week</strong>: one revision session per subject, no new learning. The topics to cover are listed in{' '}
+                  <Link to="/sunday">Sunday Review</Link>. Take the weekly mock test from <Link to="/tests">Tests</Link>.
                 </span>
               </div>
             ) : null}

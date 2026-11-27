@@ -2,7 +2,7 @@ import { Types } from 'mongoose'
 import { toMinutes } from '../../lib/clock.js'
 import { addDays } from '../../lib/dates.js'
 import { conflict, notFound, unprocessable } from '../../lib/errors.js'
-import { ExamMistake, Question, RevisionAttempt, RevisionObligation, StudySession, StudyWorkspace } from '../../models/index.js'
+import { ExamMistake, Question, RevisionAttempt, RevisionObligation, StudySession, StudyWorkspace, taxonomyKey } from '../../models/index.js'
 import { loadCurriculum } from '../workspace/curriculum.service.js'
 import { isDuplicateKey, nextStudyDay, planContext, weekStartOf, weeklyDueDate, type Oid, type PlanContext } from './plan.context.js'
 
@@ -155,18 +155,20 @@ export async function ensureNextDay(ctx: PlanContext) {
 /** Weekly obligations for the week starting `weekStart` (Monday), one per subject. */
 export async function ensureWeekly(ctx: PlanContext, weekStart: string) {
   const weekEnd = addDays(weekStart, 6)
+  // The weekly review covers the study days BEFORE the review day (Mon–Sat when it is Sunday).
+  const due = weeklyDueDate(ctx, weekStart)
+  const lastDay = due > weekStart ? addDays(due, -1) : weekEnd
   const sessions = await StudySession.find({
     userId: ctx.userId,
     sessionType: 'learning',
     status: 'completed',
-    date: { $gte: weekStart, $lte: weekEnd < ctx.today ? weekEnd : ctx.today }
+    date: { $gte: weekStart, $lte: lastDay < ctx.today ? lastDay : ctx.today }
   }).lean()
   const groups = new Map<string, LeanSession[]>()
   for (const s of sessions) {
     if (!completedTopics(s).length) continue
     groups.set(s.subjectId, [...(groups.get(s.subjectId) ?? []), s])
   }
-  const due = weeklyDueDate(ctx, weekStart)
   for (const [subjectId, list] of groups) {
     const key = `weekly:${weekStart}:${subjectId}`
     const topics = mergeTopics(list.map(completedTopics))
@@ -371,8 +373,9 @@ export async function getPreparation(userId: Oid, id: Oid) {
   }
   const topicNotes = new Map((wsData.chapters ?? []).flatMap((c) => (c.topics ?? []).map((t) => [t.id, t.notes ?? ''] as const)))
   const [questions, examMistakes] = await Promise.all([
-    Question.find({ userId, status: 'verified', topicId: { $in: topicIds } })
-      .select('questionText options topicId difficulty')
+    // Practice comes from the shared question hub, matched by topic name (hub questions are not tied to one student's ids).
+    Question.find({ status: 'ready', topicKey: { $in: o.topics.map((t) => taxonomyKey(t.topicName)).filter(Boolean) } })
+      .select('questionText options topicName difficulty')
       .limit(10)
       .lean(),
     ExamMistake.find({ userId, topicId: { $in: topicIds }, status: { $ne: 'resolved' } })
@@ -400,7 +403,7 @@ export async function getPreparation(userId: Oid, id: Oid) {
       ...o.topics.map((t) => ({ id: `topic:${t.topicId}`, kind: 'topic' as const, label: `Revise ${t.topicName}`, topicId: t.topicId })),
       ...o.topics.flatMap((t) => (cur.topic(t.topicId)?.formulas ?? []).slice(0, 5).map((f, i) => ({ id: `formula:${t.topicId}:${i}`, kind: 'formula' as const, label: f, topicId: t.topicId })))
     ],
-    practiceQuestions: questions.map((q) => ({ id: String(q._id), topicId: q.topicId, text: q.questionText, options: q.options, difficulty: q.difficulty })),
+    practiceQuestions: questions.map((q) => ({ id: String(q._id), topicId: o.topics.find((t) => taxonomyKey(t.topicName) === taxonomyKey(q.topicName))?.topicId ?? '', text: q.questionText, options: q.options, difficulty: q.difficulty })),
     mistakes: [
       ...examMistakes.map((m) => ({ id: String(m._id), source: 'mock_test' as const, topicId: m.topicId, question: m.questionText, explanation: m.explanation, category: m.category, occurrences: m.occurrences })),
       ...legacyMistakes.map((m) => ({ id: m.id, source: 'mistake_bank' as const, topicId: m.topicId, question: m.question, explanation: m.explanation ?? null, category: m.category ?? null, occurrences: 1 }))

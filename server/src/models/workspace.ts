@@ -29,14 +29,10 @@ const userSettingsSchema = new Schema(
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     timezone: { type: String, default: 'Asia/Kolkata' },
     cycle: {
-      /** Ordered subject ids that make up one study cycle. Empty = all workspace subjects. */
+      /** Ordered subject ids used by the cycle generator. Empty = all workspace subjects. */
       subjectIds: { type: [String], default: [] },
-      defaultRevisionMinutes: { type: Number, default: 10, min: 0, max: 180 },
       /** Per-subject override of the revision block length (minutes). */
       revisionMinutesBySubject: { type: Map, of: Number, default: {} },
-      revisionMinutesPerTopic: { type: Number, default: 3, min: 1, max: 60 },
-      maxTopicsPerRevisionBlock: { type: Number, default: 5, min: 1, max: 50 },
-      revisionMandatory: { type: Boolean, default: true },
       /** Cycle configuration used by the schedule's cycle generator. */
       cyclesPerDay: { type: Number, default: 2, min: 1, max: 8 },
       sessionMinutes: { type: Number, default: 60, min: 10, max: 300 },

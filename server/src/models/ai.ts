@@ -3,7 +3,8 @@ import mongoose, { Schema } from 'mongoose'
 /** One row per AI call. Never stores prompts or responses — only metadata for cost control. */
 const aiUsageLogSchema = new Schema(
   {
-    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    /** null = a server background call (e.g. answering an uploaded question). */
+    userId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     date: { type: String, required: true },
     feature: { type: String, required: true },
     provider: { type: String, required: true },
@@ -17,4 +18,5 @@ const aiUsageLogSchema = new Schema(
   { timestamps: true }
 )
 aiUsageLogSchema.index({ userId: 1, date: 1 })
+aiUsageLogSchema.index({ date: 1, feature: 1 })
 export const AIUsageLog = mongoose.model('AIUsageLog', aiUsageLogSchema)

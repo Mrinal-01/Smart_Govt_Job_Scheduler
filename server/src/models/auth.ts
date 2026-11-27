@@ -59,28 +59,6 @@ refreshSessionSchema.index({ familyId: 1 })
 refreshSessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 })
 export const RefreshSession = mongoose.model('RefreshSession', refreshSessionSchema)
 
-/* ------------------------------------------------------------------ */
-/* One-time tokens                                                     */
-/* ------------------------------------------------------------------ */
-
-function oneTimeTokenSchema() {
-  const schema = new Schema(
-    {
-      userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-      tokenHash: { type: String, required: true },
-      expiresAt: { type: Date, required: true },
-      usedAt: { type: Date, default: null }
-    },
-    { timestamps: true }
-  )
-  schema.index({ tokenHash: 1 }, { unique: true })
-  schema.index({ userId: 1 })
-  schema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 })
-  return schema
-}
-
-export const EmailVerificationToken = mongoose.model('EmailVerificationToken', oneTimeTokenSchema())
-export const PasswordResetToken = mongoose.model('PasswordResetToken', oneTimeTokenSchema())
 
 /* ------------------------------------------------------------------ */
 /* Phone OTP — one active code per (phone, purpose)                    */

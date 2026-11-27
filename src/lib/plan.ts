@@ -4,7 +4,7 @@
  * Session status, revision gates and revision completion are decided by the
  * server. Nothing here is cached in localStorage; every view re-reads the API,
  * so a refresh can never lose or invent a gate. See
- * docs/STUDY_CYCLE_AND_REVISION_API.md for the contract.
+ * docs/API_DOCUMENTATION.md (Schedule & study plan) for the contract.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, errorMessage } from './http'

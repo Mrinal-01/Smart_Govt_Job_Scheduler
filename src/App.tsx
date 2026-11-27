@@ -5,6 +5,7 @@ import { Header, Sidebar } from './components/AppShell'
 import { Badge, Button, ToastStack } from './components/ui'
 import { SessionWorkflowHost } from './components/sessions'
 import { PlanTodayProvider } from './components/PlanToday'
+import { PageErrorBoundary } from './components/PageErrorBoundary'
 import { useStudy } from './store/StudyStore'
 import { evaluateReminders } from './services/reminder'
 import { reminderAudio, sendBrowserNotification } from './services/audio'
@@ -20,6 +21,7 @@ import MistakeBankPage from './pages/MistakeBankPage'
 import AnalyticsPage from './pages/AnalyticsPage'
 import SettingsPage from './pages/SettingsPage'
 import SundayPage from './pages/SundayPage'
+import AiHelpPage from './pages/AiHelpPage'
 import NotFoundPage from './pages/NotFoundPage'
 import LoginPage from './pages/auth/LoginPage'
 import RegisterPage from './pages/auth/RegisterPage'
@@ -348,6 +350,7 @@ function StudyApp() {
       {menuOpen ? <div className="scrim" onClick={() => setMenuOpen(false)} /> : null}
       <div className="main-shell">
         <Header onOpenMenu={() => setMenuOpen(true)} />
+        <PageErrorBoundary key={location.pathname}>
         <Routes>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/schedule" element={<SchedulePage />} />
@@ -361,6 +364,8 @@ function StudyApp() {
           <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/sunday" element={<SundayPage />} />
+          <Route path="/ai" element={<AiHelpPage />} />
+          <Route path="/assistant" element={<Navigate to="/ai" replace />} />
           <Route path="/cycles" element={<Navigate to="/schedule" replace />} />
           <Route path="/tests" element={<TestsHomePage />} />
           <Route path="/tests/new" element={<CreateTestPage />} />
@@ -369,6 +374,7 @@ function StudyApp() {
           <Route path="/tests/attempts/:attemptId" element={<AttemptResultPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
+        </PageErrorBoundary>
       </div>
       <SessionWorkflowHost />
       <ReminderRuntime />

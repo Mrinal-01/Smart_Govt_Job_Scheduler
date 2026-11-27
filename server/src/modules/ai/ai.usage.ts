@@ -55,3 +55,26 @@ export async function runAI<T extends { usage: AIUsage }>(
     throw err
   }
 }
+
+/**
+ * Background AI work that is not a student's own request (answering questions in the shared
+ * question hub). Counted against AI_BACKGROUND_DAILY_LIMIT, never against a student's limit.
+ * Returns null when AI is not configured so callers can retry later.
+ */
+export async function runSystemAI<T extends { usage: AIUsage }>(feature: string, call: (provider: AIProvider) => Promise<T>): Promise<T | null> {
+  const provider = getAIProvider()
+  if (!provider) return null
+  const used = await AIUsageLog.countDocuments({ userId: null, date: dateKey() })
+  if (used >= env.AI_BACKGROUND_DAILY_LIMIT) throw tooMany('Background AI limit reached for today.', 'AI_BACKGROUND_LIMIT')
+  const started = Date.now()
+  try {
+    const result = await call(provider)
+    await AIUsageLog.create({ userId: null, date: dateKey(), feature, provider: provider.name, model: provider.model, status: 'success', inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens, latencyMs: Date.now() - started })
+    return result
+  } catch (err) {
+    const code = err instanceof AppError ? err.code : 'AI_ERROR'
+    await AIUsageLog.create({ userId: null, date: dateKey(), feature, provider: provider.name, model: provider.model, status: 'error', latencyMs: Date.now() - started, errorCode: code })
+    logger.warn({ feature, code }, 'Background AI call failed')
+    throw err
+  }
+}

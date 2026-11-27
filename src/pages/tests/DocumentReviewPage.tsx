@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, FileText, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
 import { Badge, Button, Card, CardHeader, ConfirmDialog, EmptyState, LoadingBlock, Progress, StatCard, Tabs } from '../../components/ui'
 import { useStudy } from '../../store/StudyStore'
+import { useAuth } from '../../auth/AuthContext'
 import { api, errorMessage } from '../../lib/http'
 import { QuestionEditor, SourcePageButton, TaxonomyFields, fmtBytes, type BankQuestion, type QuestionStatus, type UploadedDoc } from './shared'
 
@@ -30,6 +31,8 @@ export default function DocumentReviewPage() {
   const [params] = useSearchParams()
   const navigate = useNavigate()
   const { notify } = useStudy()
+  const { config } = useAuth()
+  const aiConfigured = Boolean(config?.ai.configured)
   const [doc, setDoc] = useState<UploadedDoc | null>(null)
   const [counts, setCounts] = useState<Record<string, number>>({})
   const [questions, setQuestions] = useState<BankQuestion[] | null>(null)
@@ -72,6 +75,16 @@ export default function DocumentReviewPage() {
     }
   }, [loadDoc, loadQuestions])
 
+  // While AI is answering this PDF's questions in the background, refresh every 10 s.
+  const waiting = (counts.pending_answer ?? 0) > 0
+  useEffect(() => {
+    if (!waiting || !aiConfigured || doc?.status !== 'completed') return
+    const t = window.setInterval(() => {
+      void loadDoc().then(loadQuestions).catch(() => undefined)
+    }, 10_000)
+    return () => window.clearInterval(t)
+  }, [waiting, aiConfigured, doc?.status, loadDoc, loadQuestions])
+
   const visible = useMemo(() => (questions ?? []).filter((q) => filter === 'all' || q.status === filter), [questions, filter])
 
   const onSaved = (q: BankQuestion) => {
@@ -79,7 +92,7 @@ export default function DocumentReviewPage() {
     void loadDoc()
   }
 
-  const bulk = async (action: 'verify' | 'reject' | 'assign') => {
+  const bulk = async (action: 'confirm' | 'reject' | 'assign') => {
     setBusy(true)
     try {
       const r = await api<{ succeeded: number; failed: number; results: Array<{ ok: boolean; error?: string }> }>('/api/questions/bulk', {
@@ -113,7 +126,7 @@ export default function DocumentReviewPage() {
   if (error && !doc) return <main className="page"><div className="callout callout--danger">{error}</div></main>
   if (!doc) return <main className="page"><LoadingBlock label="Loading document…" /></main>
 
-  const verified = counts.verified ?? 0
+  const ready = counts.ready ?? 0
   const returnType = params.get('type')
   return (
     <main className="page">
@@ -124,8 +137,9 @@ export default function DocumentReviewPage() {
           </Link>
           <h1>{doc.originalName}</h1>
           <p className="page-head__sub">
-            {doc.pageCount} pages · {fmtBytes(doc.sizeBytes)} · uploaded {new Date(doc.createdAt).toLocaleString()}. Review every extracted question — only <strong>verified</strong> questions can
-            be used in mock tests.
+            {doc.pageCount} pages · {fmtBytes(doc.sizeBytes)} · uploaded {new Date(doc.createdAt).toLocaleString()}
+            {doc.intent.subjectNames?.length ? ` · ${doc.intent.subjectNames.join(', ')}` : ''}. Questions go into the shared question hub: ones with an answer key are{' '}
+            <strong>ready</strong> right away, the rest are answered by AI in the background, and unclear ones wait for your review.
           </p>
         </div>
         <div className="page-head__actions">
@@ -138,7 +152,7 @@ export default function DocumentReviewPage() {
           <Button variant="ghost" icon={<Trash2 size={13} />} onClick={() => setConfirmDelete(true)}>
             Delete
           </Button>
-          <Button variant="primary" iconRight={<ArrowRight size={14} />} disabled={!verified} onClick={() => navigate(`/tests/new?step=configure${returnType ? `&type=${returnType}` : ''}`)}>
+          <Button variant="primary" iconRight={<ArrowRight size={14} />} disabled={!ready} onClick={() => navigate(`/tests/new?step=configure${returnType ? `&type=${returnType}` : ''}`)}>
             Configure a test
           </Button>
         </div>
@@ -164,9 +178,14 @@ export default function DocumentReviewPage() {
       {doc.status === 'completed' ? (
         <div className="grid grid--4 section">
           <StatCard label="Questions found" value={doc.stats.questionsFound} icon={<FileText size={15} />} hint={`${doc.stats.textPages} text · ${doc.stats.ocrPages} OCR pages`} />
-          <StatCard label="New in bank" value={doc.stats.inserted} hint={`${doc.stats.duplicates} duplicate(s) skipped`} tone="accent" />
-          <StatCard label="Need review" value={counts.needs_review ?? 0} hint="Uncertain extraction" tone="warning" />
-          <StatCard label="Verified" value={verified} hint={doc.stats.answerKeyFound ? 'Answer key found in PDF' : 'No answer key in PDF'} tone="success" />
+          <StatCard label="Ready for tests" value={ready} hint={doc.stats.answerKeyFound ? 'Answer key found in the PDF' : 'No answer key — AI answers them'} tone="success" />
+          <StatCard
+            label="Waiting for AI"
+            value={counts.pending_answer ?? 0}
+            hint={aiConfigured ? 'Answered in the background' : 'AI is off — answered once OPENAI_API_KEY is added'}
+            tone="accent"
+          />
+          <StatCard label="Need review" value={counts.needs_review ?? 0} hint={`${doc.stats.inserted} new · ${doc.stats.duplicates} already in the hub`} tone="warning" />
         </div>
       ) : null}
 
@@ -178,9 +197,9 @@ export default function DocumentReviewPage() {
               onChange={setFilter}
               tabs={[
                 { value: 'all', label: 'All', count: questions.length },
+                { value: 'ready', label: 'Ready', count: ready },
+                { value: 'pending_answer', label: 'Waiting for AI', count: counts.pending_answer ?? 0 },
                 { value: 'needs_review', label: 'Needs review', count: counts.needs_review ?? 0 },
-                { value: 'extracted', label: 'Extracted', count: counts.extracted ?? 0 },
-                { value: 'verified', label: 'Verified', count: verified },
                 { value: 'rejected', label: 'Rejected', count: counts.rejected ?? 0 }
               ]}
             />
@@ -189,14 +208,14 @@ export default function DocumentReviewPage() {
                 <input
                   type="checkbox"
                   className="checkbox"
-                  checked={visible.length > 0 && visible.every((q) => selected.has(q._id))}
-                  onChange={(e) => setSelected(e.target.checked ? new Set(visible.map((q) => q._id)) : new Set())}
+                  checked={visible.some((q) => q.mine) && visible.filter((q) => q.mine).every((q) => selected.has(q._id))}
+                  onChange={(e) => setSelected(e.target.checked ? new Set(visible.filter((q) => q.mine).map((q) => q._id)) : new Set())}
                 />
                 Select all shown
               </label>
               <Badge>{selected.size} selected</Badge>
-              <Button size="sm" variant="success" icon={<ShieldCheck size={13} />} disabled={!selected.size || busy} onClick={() => bulk('verify')}>
-                Verify selected
+              <Button size="sm" variant="success" icon={<ShieldCheck size={13} />} disabled={!selected.size || busy} onClick={() => bulk('confirm')} title="Use in tests (no answer → sent to AI)">
+                Confirm selected
               </Button>
               <Button size="sm" variant="ghost" disabled={!selected.size || busy} onClick={() => bulk('reject')}>
                 Reject selected
@@ -218,6 +237,7 @@ export default function DocumentReviewPage() {
                   key={q._id}
                   question={q}
                   onSaved={onSaved}
+                  aiConfigured={aiConfigured}
                   selectable
                   selected={selected.has(q._id)}
                   onSelect={(v) =>
@@ -231,7 +251,7 @@ export default function DocumentReviewPage() {
                 />
               ))
             ) : (
-              <EmptyState compact title={questions.length ? 'No questions in this filter' : 'No questions were detected'} message={questions.length ? undefined : 'Check the PDF format, or add questions manually in the Question Bank.'} />
+              <EmptyState compact title={questions.length ? 'No questions in this filter' : 'No questions were detected'} message={questions.length ? undefined : 'Check the PDF format, or add questions manually in the Question Hub.'} />
             )}
           </div>
         </Card>
@@ -243,7 +263,7 @@ export default function DocumentReviewPage() {
         open={confirmDelete}
         onClose={() => setConfirmDelete(false)}
         title="Delete this PDF?"
-        message="The stored file and its unverified questions are deleted. Verified questions stay in your question bank."
+        message="The stored file is deleted, along with its questions that are not ready yet. Ready questions stay in the shared hub — other students may already use them."
         confirmLabel="Delete PDF"
         onConfirm={async () => {
           try {

@@ -7,6 +7,7 @@ import { authOf, requireAuth } from '../../middleware/auth.js'
 import { QUESTION_STATUSES, DIFFICULTIES, QUESTION_TYPES } from '../../models/index.js'
 import * as svc from './question.service.js'
 
+/* /api/questions — the central question hub (shared by all students). */
 export const questionRouter = Router()
 questionRouter.use(requireAuth)
 
@@ -30,14 +31,13 @@ questionRouter.get(
   asyncHandler(async (req, res) => {
     const f = parse(
       z.object({
+        scope: z.enum(['hub', 'mine']).default('hub'),
         status: z.enum(QUESTION_STATUSES).optional(),
         subjectId: z.string().max(120).optional(),
-        chapterId: z.string().max(160).optional(),
-        topicId: z.string().max(240).optional(),
+        subjectKey: z.string().max(120).optional(),
         difficulty: z.enum(DIFFICULTIES).optional(),
         origin: z.enum(['pdf', 'manual', 'ai_generated']).optional(),
         documentId: objectId.optional(),
-        hasAnswer: z.enum(['true', 'false']).transform((v) => v === 'true').optional(),
         q: z.string().max(100).optional(),
         page: z.coerce.number().int().min(1).default(1),
         limit: z.coerce.number().int().min(1).max(200).default(25)
@@ -55,6 +55,13 @@ questionRouter.get(
   })
 )
 
+questionRouter.get(
+  '/hub-summary',
+  asyncHandler(async (req, res) => {
+    res.json(await svc.hubSummary(authOf(req).userId))
+  })
+)
+
 questionRouter.post(
   '/',
   asyncHandler(async (req, res) => {
@@ -69,17 +76,12 @@ questionRouter.post(
     const body = parse(
       z.object({
         ids: z.array(objectId).min(1).max(200),
-        action: z.enum(['verify', 'reject', 'delete', 'assign']),
+        action: z.enum(['confirm', 'reject', 'delete', 'assign']),
         assign: editSchema.pick({ subjectId: true, chapterId: true, topicId: true, difficulty: true }).optional()
       }),
       req.body
     )
-    const results = await svc.bulkAction(
-      authOf(req).userId,
-      body.ids.map((id) => new Types.ObjectId(id)),
-      body.action,
-      body.assign
-    )
+    const results = await svc.bulkAction(authOf(req).userId, body.ids.map((id) => new Types.ObjectId(id)), body.action, body.assign)
     res.json({ results, succeeded: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length })
   })
 )
@@ -100,9 +102,9 @@ questionRouter.patch(
 )
 
 questionRouter.post(
-  '/:id/verify',
+  '/:id/confirm',
   asyncHandler(async (req, res) => {
-    res.json({ question: await svc.verifyQuestion(authOf(req).userId, oid(req.params.id)) })
+    res.json({ question: await svc.confirmQuestion(authOf(req).userId, oid(req.params.id)) })
   })
 )
 
@@ -113,10 +115,17 @@ questionRouter.post(
   })
 )
 
+questionRouter.post(
+  '/:id/report',
+  asyncHandler(async (req, res) => {
+    const body = parse(z.object({ reason: z.string().trim().min(3, 'Say briefly what is wrong').max(500) }), req.body)
+    res.json(await svc.reportQuestion(authOf(req).userId, oid(req.params.id), body.reason))
+  })
+)
+
 questionRouter.delete(
   '/:id',
   asyncHandler(async (req, res) => {
-    await svc.deleteQuestion(authOf(req).userId, oid(req.params.id))
-    res.status(204).end()
+    res.json(await svc.deleteQuestion(authOf(req).userId, oid(req.params.id)))
   })
 )

@@ -9,16 +9,22 @@ import { chaptersOf } from '../../store/selectors'
 import { QuestionEditor, TaxonomyFields, type BankQuestion } from './shared'
 
 interface Filters {
+  scope: 'hub' | 'mine'
   status: string
   subjectId: string
-  chapterId: string
   difficulty: string
   origin: string
-  hasAnswer: string
   q: string
 }
 
-const EMPTY: Filters = { status: '', subjectId: '', chapterId: '', difficulty: '', origin: '', hasAnswer: '', q: '' }
+const EMPTY: Filters = { scope: 'hub', status: '', subjectId: '', difficulty: '', origin: '', q: '' }
+
+interface HubStats {
+  byStatus: Record<string, number>
+  mine: Record<string, number>
+  subjects: Array<{ subjectKey: string | null; subjectName: string; ready: number; pending_answer: number; needs_review: number }>
+  ai: { configured: boolean }
+}
 
 export default function QuestionBankPage() {
   const { state } = useStudy()
@@ -30,13 +36,17 @@ export default function QuestionBankPage() {
   const [error, setError] = useState('')
   const [adding, setAdding] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [stats, setStats] = useState<HubStats | null>(null)
   const limit = 20
+  const aiConfigured = Boolean(config?.ai.configured)
 
   const load = useCallback(async () => {
     const params = new URLSearchParams({ page: String(page), limit: String(limit) })
     Object.entries(filters).forEach(([k, v]) => v && params.set(k, v))
     try {
-      setData(await api<{ items: BankQuestion[]; total: number }>(`/api/questions?${params}`))
+      const [list, st] = await Promise.all([api<{ items: BankQuestion[]; total: number }>(`/api/questions?${params}`), api<HubStats>('/api/questions/stats')])
+      setData(list)
+      setStats(st)
       setError('')
     } catch (err) {
       setError(errorMessage(err))
@@ -57,9 +67,8 @@ export default function QuestionBankPage() {
 
   const set = (k: keyof Filters, v: string) => {
     setPage(1)
-    setFilters((f) => ({ ...f, [k]: v, ...(k === 'subjectId' ? { chapterId: '' } : {}) }))
+    setFilters((f) => ({ ...f, [k]: v }))
   }
-  const chapters = filters.subjectId ? chaptersOf(state, filters.subjectId) : []
   const pages = data ? Math.max(1, Math.ceil(data.total / limit)) : 1
 
   return (
@@ -69,8 +78,11 @@ export default function QuestionBankPage() {
           <Link to="/tests" className="back-link">
             <ArrowLeft size={13} /> Test builder
           </Link>
-          <h1>Question Bank</h1>
-          <p className="page-head__sub">Your personal, reusable questions. Verified questions can be used in any number of mock tests.</p>
+          <h1>Question Hub</h1>
+          <p className="page-head__sub">
+            One shared pool of questions uploaded by all students, filed by subject. Only <strong>ready</strong> questions (with a trusted answer) go into mock tests. You can
+            edit the questions you uploaded; answers of other students’ questions stay hidden until you meet them in a test.
+          </p>
         </div>
         <div className="page-head__actions">
           <Button icon={<Sparkles size={14} />} onClick={() => setGenerating(true)} disabled={!config?.ai.configured} title={config?.ai.configured ? undefined : 'AI is not configured on the server'}>
@@ -82,8 +94,54 @@ export default function QuestionBankPage() {
         </div>
       </div>
 
+      {stats ? (
+        <Card className="section">
+          <div className="hub-stats">
+            <div>
+              <span className="stat__label">Ready for tests</span>
+              <strong className="mono">{stats.byStatus.ready ?? 0}</strong>
+            </div>
+            <div>
+              <span className="stat__label">Waiting for AI answer</span>
+              <strong className="mono">{stats.byStatus.pending_answer ?? 0}</strong>
+            </div>
+            <div>
+              <span className="stat__label">Needs review</span>
+              <strong className="mono">{stats.byStatus.needs_review ?? 0}</strong>
+            </div>
+            <div>
+              <span className="stat__label">Your uploads</span>
+              <strong className="mono">{Object.values(stats.mine).reduce((a, b) => a + b, 0)}</strong>
+            </div>
+          </div>
+          {!stats.ai.configured && (stats.byStatus.pending_answer ?? 0) > 0 ? (
+            <div className="callout callout--info" style={{ marginTop: 10 }}>
+              {stats.byStatus.pending_answer} question(s) have no answer key and are waiting for AI. AI is not switched on yet on this server (add OPENAI_API_KEY) — they are
+              answered automatically as soon as it is.
+            </div>
+          ) : null}
+          {stats.subjects.length ? (
+            <div className="hub-subjects">
+              {stats.subjects.map((sub) => (
+                <span key={sub.subjectKey ?? 'none'} className="hub-subject">
+                  <strong>{sub.subjectName}</strong> {sub.ready} ready
+                  {sub.pending_answer ? ` · ${sub.pending_answer} waiting` : ''}
+                  {sub.needs_review ? ` · ${sub.needs_review} review` : ''}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </Card>
+      ) : null}
+
       <Card className="section">
         <div className="filter-grid">
+          <Field label="Show">
+            <Select value={filters.scope} onChange={(e) => set('scope', e.target.value)}>
+              <option value="hub">Whole hub</option>
+              <option value="mine">My uploads</option>
+            </Select>
+          </Field>
           <Field label="Search">
             <div className="input-affix">
               <Search size={14} className="input-affix__icon" />
@@ -93,9 +151,9 @@ export default function QuestionBankPage() {
           <Field label="Status">
             <Select value={filters.status} onChange={(e) => set('status', e.target.value)}>
               <option value="">Any</option>
-              <option value="verified">Verified</option>
+              <option value="ready">Ready</option>
+              <option value="pending_answer">Waiting for AI answer</option>
               <option value="needs_review">Needs review</option>
-              <option value="extracted">Extracted</option>
               <option value="rejected">Rejected</option>
             </Select>
           </Field>
@@ -105,16 +163,6 @@ export default function QuestionBankPage() {
               {state.subjects.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Chapter">
-            <Select value={filters.chapterId} disabled={!filters.subjectId} onChange={(e) => set('chapterId', e.target.value)}>
-              <option value="">Any</option>
-              {chapters.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
                 </option>
               ))}
             </Select>
@@ -136,13 +184,6 @@ export default function QuestionBankPage() {
               <option value="ai_generated">AI-generated</option>
             </Select>
           </Field>
-          <Field label="Answer">
-            <Select value={filters.hasAnswer} onChange={(e) => set('hasAnswer', e.target.value)}>
-              <option value="">Any</option>
-              <option value="true">Has answer</option>
-              <option value="false">No answer</option>
-            </Select>
-          </Field>
         </div>
       </Card>
 
@@ -156,6 +197,7 @@ export default function QuestionBankPage() {
               <QuestionEditor
                 key={q._id}
                 question={q}
+                aiConfigured={aiConfigured}
                 onSaved={(nq) => setData((d) => (d ? { ...d, items: d.items.map((x) => (x._id === nq._id ? nq : x)) } : d))}
                 onDeleted={(id) => setData((d) => (d ? { total: d.total - 1, items: d.items.filter((x) => x._id !== id) } : d))}
               />
@@ -176,8 +218,8 @@ export default function QuestionBankPage() {
       ) : (
         <Card>
           <EmptyState
-            title={Object.values(filters).some(Boolean) ? 'No questions match these filters' : 'Your question bank is empty'}
-            message="Upload a question-paper PDF in the Test Builder, or add questions manually."
+            title={filters.status || filters.subjectId || filters.q || filters.origin || filters.difficulty ? 'No questions match these filters' : filters.scope === 'mine' ? 'You have not uploaded questions yet' : 'The question hub is empty'}
+            message="Upload a question-paper PDF, or add questions manually. Everyone’s uploads build the hub."
             action={
               <Link to="/tests/new" className="btn btn--primary btn--md">
                 <span>Upload a PDF</span>
@@ -195,6 +237,7 @@ export default function QuestionBankPage() {
 function AddQuestionModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
   const [text, setText] = useState('')
   const [options, setOptions] = useState(['', '', '', ''])
+  const [answer, setAnswer] = useState('')
   const [tax, setTax] = useState<{ subjectId: string | null; chapterId: string | null; topicId: string | null }>({ subjectId: null, chapterId: null, topicId: null })
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -202,6 +245,7 @@ function AddQuestionModal({ open, onClose, onCreated }: { open: boolean; onClose
     if (open) {
       setText('')
       setOptions(['', '', '', ''])
+      setAnswer('')
       setError('')
     }
   }, [open])
@@ -209,9 +253,14 @@ function AddQuestionModal({ open, onClose, onCreated }: { open: boolean; onClose
     const opts = options.map((o) => o.trim()).filter(Boolean)
     if (!text.trim()) return setError('Enter the question text.')
     if (opts.length < 2) return setError('Add at least two options.')
+    if (!tax.subjectId) return setError('Choose the subject — the hub files questions by subject.')
+    if (answer && 'ABCD'.indexOf(answer) >= opts.length) return setError('The correct answer must be one of the filled options.')
     setBusy(true)
     try {
-      await api('/api/questions', { method: 'POST', body: { questionText: text.trim(), questionType: 'single_correct', options: opts.map((t) => ({ text: t })), ...tax } })
+      await api('/api/questions', {
+        method: 'POST',
+        body: { questionText: text.trim(), questionType: 'single_correct', options: opts.map((t) => ({ text: t })), correctAnswer: answer ? [answer] : null, ...tax }
+      })
       onCreated()
       onClose()
     } catch (err) {
@@ -225,13 +274,13 @@ function AddQuestionModal({ open, onClose, onCreated }: { open: boolean; onClose
       open={open}
       onClose={onClose}
       title="Add a question"
-      subtitle="Set the correct answer and verify it from the bank afterwards."
+      subtitle="It joins the shared hub. Pick the correct answer if you know it — otherwise AI works it out in the background."
       size="lg"
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
           <Button variant="primary" loading={busy} onClick={create}>
-            Add to bank
+            Add to hub
           </Button>
         </>
       }
@@ -245,6 +294,16 @@ function AddQuestionModal({ open, onClose, onCreated }: { open: boolean; onClose
             <Input value={o} onChange={(e) => setOptions((os) => os.map((x, j) => (j === i ? e.target.value : x)))} />
           </Field>
         ))}
+        <Field label="Correct answer" hint="Optional — leave as “Let AI solve it” if you are not sure">
+          <Select value={answer} onChange={(e) => setAnswer(e.target.value)}>
+            <option value="">Let AI solve it</option>
+            {['A', 'B', 'C', 'D'].map((l, i) => (
+              <option key={l} value={l} disabled={!options[i]?.trim()}>
+                {l}
+              </option>
+            ))}
+          </Select>
+        </Field>
         <TaxonomyFields value={tax} onChange={setTax} />
         {error ? <p className="field__error">{error}</p> : null}
       </div>
@@ -265,7 +324,9 @@ function GeneratePracticeModal({ open, onClose, onCreated }: { open: boolean; on
     setError('')
     try {
       const r = await api<{ questions: unknown[]; duplicates: number }>('/api/ai/practice-questions', { method: 'POST', body: { topicId, count: Number(count), difficulty } })
-      setResult(`${r.questions.length} AI-generated question(s) added for review${r.duplicates ? ` (${r.duplicates} duplicate skipped)` : ''}.`)
+      setResult(
+        `${r.questions.length} question(s) added to the hub. Each is solved again independently by AI and becomes ready only if both agree${r.duplicates ? ` (${r.duplicates} duplicate skipped)` : ''}.`
+      )
       onCreated()
     } catch (err) {
       setError(errorMessage(err))
@@ -281,7 +342,7 @@ function GeneratePracticeModal({ open, onClose, onCreated }: { open: boolean; on
         onClose()
       }}
       title="Generate practice questions with AI"
-      subtitle="Original questions — clearly labelled as AI-generated, never presented as official PYQs. Review and verify before using them in tests."
+      subtitle="Original questions — labelled as AI-generated, never presented as official previous-year questions."
       footer={
         <>
           <Button onClick={onClose}>Close</Button>

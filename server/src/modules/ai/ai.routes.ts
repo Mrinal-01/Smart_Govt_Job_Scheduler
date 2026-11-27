@@ -6,6 +6,7 @@ import { objectId, parse } from '../../lib/validate.js'
 import { authOf, requireAuth } from '../../middleware/auth.js'
 import { toOid } from '../exams/selection.service.js'
 import * as svc from './assistant.service.js'
+import { askAssistant } from './chat.service.js'
 
 export const aiRouter = Router()
 aiRouter.use(requireAuth)
@@ -24,6 +25,22 @@ aiRouter.get(
   '/status',
   asyncHandler(async (req, res) => {
     res.json(await svc.aiStatus(authOf(req).userId))
+  })
+)
+
+/** AI Help: study-only assistant. Out-of-scope questions get a fixed refusal (see chat.service.ts). */
+aiRouter.post(
+  '/ask',
+  aiBurst,
+  asyncHandler(async (req, res) => {
+    const body = parse(
+      z.object({
+        message: z.string().trim().min(1, 'Type a question first').max(2000, 'Keep your question under 2000 characters'),
+        history: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.string().max(6000) })).max(12).default([])
+      }),
+      req.body
+    )
+    res.json(await askAssistant(authOf(req).userId, body.message, body.history))
   })
 )
 

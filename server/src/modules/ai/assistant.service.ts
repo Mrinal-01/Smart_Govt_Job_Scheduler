@@ -4,7 +4,9 @@ import { env } from '../../config/env.js'
 import { addDays, dateKey } from '../../lib/dates.js'
 import { conflict, notFound, unprocessable } from '../../lib/errors.js'
 import { getAIProvider } from '../../integrations/ai.js'
-import { ExamMistake, MockTestAttempt, Question, StudyWorkspace } from '../../models/index.js'
+import { MockTestAttempt, Question, taxonomyKey } from '../../models/index.js'
+import { enqueueAnswering } from '../questions/answer.service.js'
+import { serializeQuestion } from '../questions/question.service.js'
 import { loadCurriculum } from '../workspace/curriculum.service.js'
 import { getSettings } from '../settings/settings.service.js'
 import { normalizeForHash } from '../documents/extraction/questionParser.js'
@@ -44,12 +46,13 @@ export async function explainWrongAnswer(userId: Oid, attemptId: Oid, questionId
     (x) => x.questionId === questionId
   )
   const known = q.answerVerified && q.correctAnswer?.length
+  const how = q.answerSource === 'ai' ? ' (worked out by AI from the question; treat as very likely, not official)' : q.answerSource === 'document_key' ? ' (from the paper\'s answer key)' : ''
   const prompt = `Question (${q.subjectName ?? 'unknown subject'} / ${q.chapterName ?? 'unknown chapter'}):
 ${q.questionText}
 Options:
 ${q.options.map((o) => `${o.label}. ${o.text}`).join('\n')}
 My answer: ${r?.selected?.length ? r.selected.join(', ') : '(not answered)'}
-${known ? `Verified correct answer: ${q.correctAnswer!.join(', ')}` : 'The correct answer is NOT known/verified.'}
+${known ? `Correct answer: ${q.correctAnswer!.join(', ')}${how}` : 'The correct answer is NOT known.'}
 ${q.explanation ? `Source explanation: ${q.explanation}` : ''}
 
 ${known
@@ -113,9 +116,10 @@ const generatedJsonSchema = {
 }
 
 /**
- * Generates original practice MCQs for a topic. They are saved to the bank as
- * origin "ai_generated", status "needs_review" — clearly labelled, never as
- * official previous-year questions, and only usable in tests once verified.
+ * Generates original practice MCQs for a topic into the shared question hub (origin
+ * "ai_generated", flagged not_official_pyq). The generator's own answer is NOT trusted on its
+ * own: each question is solved again independently by the answering step and becomes ready
+ * only when that solve is confident and agrees with the generator.
  */
 export async function generatePractice(userId: Oid, input: { topicId: string; count: number; difficulty: 'easy' | 'medium' | 'hard' | 'mixed' }) {
   const cur = await loadCurriculum(userId)
@@ -129,6 +133,7 @@ export async function generatePractice(userId: Oid, input: { topicId: string; co
         'You write ORIGINAL multiple-choice practice questions for Indian competitive exams (SSC/RRB style). Never copy or claim questions are from real previous-year papers. Each question has exactly 4 options and one correct option. Keep units and notation exact.',
       prompt: `Write ${input.count} ${input.difficulty === 'mixed' ? 'mixed-difficulty' : input.difficulty} questions on "${topic.name}" (chapter "${chapter.name}", subject "${subject.name}"). Include a short explanation for each.`,
       jsonSchema: generatedJsonSchema,
+      schemaName: 'practice_questions',
       validate: generatedSchema,
       maxTokens: 6000
     })
@@ -138,36 +143,36 @@ export async function generatePractice(userId: Oid, input: { topicId: string; co
   for (const g of data.questions.slice(0, input.count)) {
     const options = g.options.map((text, i) => ({ label: ['A', 'B', 'C', 'D'][i], text: text.trim() }))
     try {
-      saved.push(
-        await Question.create({
-          userId,
-          origin: 'ai_generated',
-          rawText: '',
-          questionText: g.questionText.trim(),
-          questionType: 'single_correct',
-          options,
-          correctAnswer: [g.correctOption],
-          answerSource: 'ai_generated',
-          explanation: g.explanation,
-          subjectId: subject.id,
-          subjectName: subject.name,
-          chapterId: chapter.id,
-          chapterName: chapter.name,
-          topicId: topic.id,
-          topicName: topic.name,
-          difficulty: g.difficulty,
-          status: 'needs_review',
-          extractionConfidence: 1,
-          flags: ['ai_generated', 'not_official_pyq'],
-          contentHash: normalizeForHash(g.questionText, options)
-        })
-      )
+      const q = await Question.create({
+        uploadedBy: userId,
+        origin: 'ai_generated',
+        rawText: '',
+        questionText: g.questionText.trim(),
+        questionType: 'single_correct',
+        options,
+        correctAnswer: null,
+        explanation: g.explanation,
+        subjectName: subject.name,
+        subjectKey: taxonomyKey(subject.name),
+        chapterName: chapter.name,
+        chapterKey: taxonomyKey(chapter.name),
+        topicName: topic.name,
+        topicKey: taxonomyKey(topic.name),
+        difficulty: g.difficulty,
+        status: 'pending_answer',
+        extractionConfidence: 1,
+        flags: ['ai_generated', 'not_official_pyq'],
+        aiStructured: { generatorAnswer: [g.correctOption] },
+        contentHash: normalizeForHash(g.questionText, options)
+      })
+      saved.push(q)
     } catch (err) {
       if ((err as { code?: number }).code === 11000) duplicates += 1
       else throw err
     }
   }
-  return { questions: saved, duplicates }
+  await enqueueAnswering(saved.map((q) => q._id))
+  return { questions: saved.map((q) => serializeQuestion(q.toObject() as never, userId)), duplicates }
 }
 
 export async function aiStatus(userId: Oid) {

@@ -7,7 +7,7 @@ import { sha256 } from '../../lib/crypto.js'
 import { AppError, asyncHandler, badRequest, conflict, notFound, unprocessable } from '../../lib/errors.js'
 import { objectId, parse } from '../../lib/validate.js'
 import { authOf, requireAuth } from '../../middleware/auth.js'
-import { ProcessingJob, Question, UploadedDocument } from '../../models/index.js'
+import { MockTest, ProcessingJob, Question, UploadedDocument } from '../../models/index.js'
 import { signFileUrl, storage, storageKeyFor, verifyFileSignature } from '../../integrations/storage.js'
 import { enqueueDocumentJob } from '../../jobs/queue.js'
 import { loadCurriculum } from '../workspace/curriculum.service.js'
@@ -55,10 +55,11 @@ documentRouter.post(
       }),
       req.body
     )
-    if (intent.subjectIds.length) {
-      const cur = await loadCurriculum(userId)
-      for (const id of intent.subjectIds) if (!cur.subject(id)) throw unprocessable('Unknown subject selected', 'UNKNOWN_SUBJECT')
-    }
+    // The hub files questions by subject, so the uploader says which subject(s) the PDF covers.
+    if (!intent.subjectIds.length) throw unprocessable('Choose the subject(s) this question paper covers.', 'SUBJECT_REQUIRED')
+    const cur = await loadCurriculum(userId)
+    for (const id of intent.subjectIds) if (!cur.subject(id)) throw unprocessable('Unknown subject selected', 'UNKNOWN_SUBJECT')
+    const subjectNames = intent.subjectIds.map((id) => cur.subject(id)!.name)
 
     const hash = sha256(file.buffer)
     const existing = await UploadedDocument.findOne({ userId, sha256: hash }).lean()
@@ -88,7 +89,7 @@ documentRouter.post(
         sizeBytes: file.size,
         sha256: hash,
         pageCount,
-        intent: { mockType: intent.mockType ?? null, subjectIds: intent.subjectIds }
+        intent: { mockType: intent.mockType ?? null, subjectIds: intent.subjectIds, subjectNames }
       })
     } catch (err) {
       await storage.remove(storageKey)
@@ -121,7 +122,10 @@ documentRouter.get(
   asyncHandler(async (req, res) => {
     const { userId } = authOf(req)
     const doc = await ownedDoc(userId, req.params.id)
-    const counts = await Question.aggregate([{ $match: { userId, documentId: doc._id } }, { $group: { _id: '$status', n: { $sum: 1 } } }])
+    const counts = await Question.aggregate([
+      { $match: { $or: [{ documentId: doc._id }, { alsoInDocuments: doc._id }] } },
+      { $group: { _id: '$status', n: { $sum: 1 } } }
+    ])
     res.json({ document: serialize(doc.toObject()), questionCounts: Object.fromEntries(counts.map((c) => [c._id, c.n])) })
   })
 )
@@ -148,8 +152,8 @@ documentRouter.post(
 )
 
 /**
- * Deletes the stored PDF and its unverified questions. Verified questions stay
- * in the bank (they are the student's curated data) with their page reference.
+ * Deletes the stored PDF. Its questions that are not ready (and not used in any test) are
+ * removed from the hub; ready questions stay — other students may already rely on them.
  */
 documentRouter.delete(
   '/:id',
@@ -157,7 +161,11 @@ documentRouter.delete(
     const { userId } = authOf(req)
     const doc = await ownedDoc(userId, req.params.id)
     if (['queued', 'processing'].includes(doc.status)) throw conflict('Wait for processing to finish before deleting.', 'ALREADY_PROCESSING')
-    const removed = await Question.deleteMany({ userId, documentId: doc._id, status: { $ne: 'verified' } })
+    const candidates = await Question.find({ uploadedBy: userId, documentId: doc._id, status: { $ne: 'ready' } }).select('_id').lean()
+    const used = new Set((await MockTest.find({ questionIds: { $in: candidates.map((c) => c._id) } }).select('questionIds').lean()).flatMap((t) => t.questionIds.map(String)))
+    const removable = candidates.filter((c) => !used.has(String(c._id))).map((c) => c._id)
+    const removed = await Question.deleteMany({ _id: { $in: removable } })
+    await Question.updateMany({ alsoInDocuments: doc._id }, { $pull: { alsoInDocuments: doc._id } })
     await ProcessingJob.deleteMany({ documentId: doc._id })
     await storage.remove(doc.storageKey)
     await UploadedDocument.deleteOne({ _id: doc._id })

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, BookmarkPlus, CheckCircle2, CircleHelp, Clock, RotateCcw, Sparkles, Target, XCircle } from 'lucide-react'
-import { Badge, Button, Card, CardHeader, LoadingBlock, Modal, StatCard, Tabs } from '../../components/ui'
+import { Badge, Button, Card, CardHeader, ConfirmDialog, LoadingBlock, Modal, StatCard, Tabs } from '../../components/ui'
 import { useStudy } from '../../store/StudyStore'
 import { useAuth } from '../../auth/AuthContext'
 import { api, errorMessage } from '../../lib/http'
 import { cx } from '../../lib/utils'
-import { SourcePageButton, fmtDuration } from './shared'
+import { answerSourceLabel, fmtDuration, type AnswerSource } from './shared'
 
 type Outcome = 'correct' | 'incorrect' | 'unanswered' | 'unscored'
 interface Breakdown {
@@ -45,6 +45,9 @@ interface ReviewQuestion {
   options: Array<{ label: string; text: string }>
   correctAnswer: string[] | null
   answerVerified: boolean
+  answerSource: AnswerSource | null
+  answerConfidence: number | null
+  answerExplanation: string | null
   explanation: string | null
   subjectName: string | null
   chapterName: string | null
@@ -71,7 +74,7 @@ const OUTCOME_META: Record<Outcome, { label: string; tone: 'success' | 'danger' 
   correct: { label: 'Correct', tone: 'success' },
   incorrect: { label: 'Incorrect', tone: 'danger' },
   unanswered: { label: 'Unanswered', tone: 'neutral' },
-  unscored: { label: 'Unscored — answer not verified', tone: 'warning' }
+  unscored: { label: 'Unscored — no trusted answer', tone: 'warning' }
 }
 
 export default function AttemptResultPage() {
@@ -84,6 +87,19 @@ export default function AttemptResultPage() {
   const [filter, setFilter] = useState<'all' | Outcome>('all')
   const [added, setAdded] = useState<Set<string>>(new Set())
   const [explain, setExplain] = useState<{ questionId: string; content: string | null; error?: string } | null>(null)
+  const [reporting, setReporting] = useState<string | null>(null)
+  const [reported, setReported] = useState<Set<string>>(new Set())
+
+  /** "This answer is wrong" — the question leaves new tests at once and AI re-checks it. */
+  const report = async (questionId: string, reason: string) => {
+    try {
+      await api(`/api/questions/${questionId}/report`, { method: 'POST', body: { reason } })
+      setReported((s) => new Set(s).add(questionId))
+      notify({ title: 'Thanks — answer reported', message: 'The question is kept out of new tests until it is re-checked.', variant: 'success' })
+    } catch (err) {
+      notify({ title: 'Could not report', message: errorMessage(err), variant: 'error' })
+    }
+  }
 
   useEffect(() => {
     api<{ attempt: AttemptDetail }>(`/api/attempts/${attemptId}`)
@@ -134,7 +150,8 @@ export default function AttemptResultPage() {
   }
 
   const visible = attempt.questions.filter((q) => filter === 'all' || outcomes.get(q.questionId)?.outcome === filter)
-  const weakChapters = r.byChapter.filter((c) => c.accuracy !== null && c.accuracy < 70).sort((a, b) => (a.accuracy ?? 0) - (b.accuracy ?? 0))
+  // Untagged questions are grouped as "No chapter" — not a real chapter, so never called weak.
+  const weakChapters = r.byChapter.filter((c) => c.key !== 'none' && c.accuracy !== null && c.accuracy < 70).sort((a, b) => (a.accuracy ?? 0) - (b.accuracy ?? 0))
 
   return (
     <main className="page">
@@ -165,8 +182,8 @@ export default function AttemptResultPage() {
         <div className="callout callout--warning section">
           <AlertTriangle size={14} />
           <span>
-            Scoring is incomplete: {r.unscored} question(s) have no verified correct answer, so they are excluded from marks and accuracy (not counted as wrong).
-            Verify their answers in the question bank to score them next time.
+            Scoring is incomplete: {r.unscored} question(s) have no trusted correct answer, so they are excluded from marks and accuracy (not counted as wrong).
+            Only ready questions (with a trusted answer) are used in new tests.
           </span>
         </div>
       ) : null}
@@ -219,7 +236,11 @@ export default function AttemptResultPage() {
                   {q.subjectName ? <Badge size="sm">{q.subjectName}</Badge> : null}
                   {q.chapterName ? <span className="text-tertiary" style={{ fontSize: 12 }}>{q.chapterName}</span> : null}
                   <span className="spacer" />
-                  <SourcePageButton documentId={q.source?.documentId ?? null} page={q.source?.pageNumber ?? null} />
+                  {q.answerVerified ? (
+                    <Badge size="sm" tone={q.answerSource === 'ai' ? 'purple' : 'neutral'}>
+                      {answerSourceLabel(q.answerSource, q.answerConfidence)}
+                    </Badge>
+                  ) : null}
                 </header>
                 <p className="q-text">{q.questionText}</p>
                 {q.questionType === 'numeric' ? (
@@ -241,13 +262,18 @@ export default function AttemptResultPage() {
                         <li key={o.label} className={cx(right && 'is-correct', mine && !right && q.answerVerified && 'is-wrong', mine && 'is-mine')}>
                           <span className="q-options__label">{LETTERS[i]}</span> {o.text}
                           {mine ? <Badge size="sm" tone={right ? 'success' : q.answerVerified ? 'danger' : 'neutral'}>your answer</Badge> : null}
-                          {right ? <Badge size="sm" tone="success">verified answer</Badge> : null}
+                          {right ? <Badge size="sm" tone="success">correct answer</Badge> : null}
                         </li>
                       )
                     })}
                   </ol>
                 )}
-                {!q.answerVerified ? <p className="text-tertiary" style={{ fontSize: 12 }}>No verified answer for this question.</p> : null}
+                {!q.answerVerified ? <p className="text-tertiary" style={{ fontSize: 12 }}>No trusted answer for this question, so it was not scored.</p> : null}
+                {q.answerExplanation ? (
+                  <p className="text-secondary" style={{ fontSize: 12.5, marginTop: 6 }}>
+                    <strong>Why:</strong> {q.answerExplanation}
+                  </p>
+                ) : null}
                 {q.explanation ? (
                   <div className="muted-box" style={{ marginTop: 8 }}>
                     <strong>Explanation:</strong> {q.explanation}
@@ -263,6 +289,15 @@ export default function AttemptResultPage() {
                       </Button>
                     )
                   ) : null}
+                  {q.answerVerified ? (
+                    reported.has(q.questionId) ? (
+                      <Badge tone="warning">Reported</Badge>
+                    ) : (
+                      <Button size="sm" variant="ghost" icon={<AlertTriangle size={13} />} onClick={() => setReporting(q.questionId)}>
+                        Report wrong answer
+                      </Button>
+                    )
+                  ) : null}
                   {config?.ai.configured && res.outcome !== 'correct' ? (
                     <Button size="sm" variant="ghost" icon={<Sparkles size={13} />} onClick={() => askAI(q.questionId)}>
                       Explain with AI
@@ -274,6 +309,23 @@ export default function AttemptResultPage() {
           })}
         </div>
       </Card>
+
+      <ConfirmDialog
+        open={Boolean(reporting)}
+        onClose={() => setReporting(null)}
+        title="Report a wrong answer?"
+        message="The question is removed from new tests right away and AI re-checks it more carefully. It returns only if the re-check agrees with the stored answer, or after its uploader fixes it."
+        confirmLabel="Report"
+        tone="primary"
+        requireReason
+        reasonLabel="What is wrong?"
+        reasonPlaceholder="e.g. The correct option is C because 12 × 15 = 180"
+        onConfirm={(reason) => {
+          const id = reporting
+          setReporting(null)
+          if (id) void report(id, reason)
+        }}
+      />
 
       <Modal open={Boolean(explain)} onClose={() => setExplain(null)} title="AI explanation" subtitle="AI-generated — check it against your study material." size="lg">
         {explain?.error ? <div className="callout callout--danger">{explain.error}</div> : explain?.content ? <div className="ai-text">{explain.content}</div> : <LoadingBlock label="Asking the AI…" />}

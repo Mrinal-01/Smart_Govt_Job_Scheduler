@@ -23,11 +23,7 @@ const patchSchema = z.object({
   cycle: z
     .object({
       subjectIds: z.array(z.string().min(1).max(120)).max(20).optional(),
-      defaultRevisionMinutes: z.number().int().min(0).max(180).optional(),
       revisionMinutesBySubject: z.record(z.string().max(120), z.number().int().min(0).max(180)).optional(),
-      revisionMinutesPerTopic: z.number().int().min(1).max(60).optional(),
-      maxTopicsPerRevisionBlock: z.number().int().min(1).max(50).optional(),
-      revisionMandatory: z.boolean().optional(),
       cyclesPerDay: z.number().int().min(1).max(8).optional(),
       sessionMinutes: z.number().int().min(10).max(300).optional(),
       breakMinutes: z.number().int().min(0).max(120).optional()

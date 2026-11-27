@@ -109,13 +109,13 @@ export default function TestsHomePage() {
         <div className="page-head__text">
           <h1>Tests</h1>
           <p className="page-head__sub">
-            Turn question-paper PDFs into your own verified question bank, then build timed mock tests.
+            Upload question papers to the shared question hub, then build timed mock tests from it. Questions without an answer key are answered by AI in the background.
           </p>
         </div>
         <div className="page-head__actions">
           <Link to="/tests/bank" className="btn btn--secondary btn--md">
             <Library size={14} />
-            <span>Question bank</span>
+            <span>Question hub</span>
           </Link>
           <Link to="/tests/new" className="btn btn--primary btn--md">
             <Plus size={14} />
@@ -125,8 +125,15 @@ export default function TestsHomePage() {
       </div>
 
       <div className="grid grid--4 section">
-        <StatCard label="Verified questions" value={bank.verified ?? 0} icon={<Library size={15} />} tone="success" hint="Usable in tests" onClick={() => navigate('/tests/bank')} />
-        <StatCard label="Awaiting review" value={(bank.needs_review ?? 0) + (bank.extracted ?? 0)} icon={<FileText size={15} />} tone="warning" hint="Extracted, not verified" />
+        <StatCard label="Ready questions in the hub" value={bank.ready ?? 0} icon={<Library size={15} />} tone="success" hint="Usable in tests" onClick={() => navigate('/tests/bank')} />
+        <StatCard
+          label="Waiting for AI answer"
+          value={bank.pending_answer ?? 0}
+          icon={<FileText size={15} />}
+          tone="warning"
+          hint={`${bank.needs_review ?? 0} need review`}
+          onClick={() => navigate('/tests/bank')}
+        />
         <StatCard label="Mock tests" value={tests.length} icon={<BookCopy size={15} />} hint={`${templates.length} template(s)`} />
         <StatCard label="Finished attempts" value={perf?.attempts ?? 0} icon={<BarChart3 size={15} />} tone="accent" />
       </div>
@@ -194,7 +201,7 @@ export default function TestsHomePage() {
             <EmptyState
               icon={<BookCopy size={20} />}
               title="No mock tests yet"
-              message="Upload a PDF to fill your question bank, verify the questions, then build a test."
+              message="Build a test from the question hub, or upload a question-paper PDF to add to it first."
               action={
                 <Link to="/tests/new" className="btn btn--primary btn--md">
                   <span>Create mock test</span>

@@ -2,7 +2,8 @@ import { Types } from 'mongoose'
 import { seededRandom, shuffle } from '../../lib/crypto.js'
 import { AppError, conflict, notFound, unprocessable } from '../../lib/errors.js'
 import { logger } from '../../lib/logger.js'
-import { ExamMistake, MockTest, MockTestAnswer, MockTestAttempt, Question } from '../../models/index.js'
+import { ExamMistake, MockTest, MockTestAnswer, MockTestAttempt, Question, taxonomyKey } from '../../models/index.js'
+import { loadCurriculum } from '../workspace/curriculum.service.js'
 import { getSettings } from '../settings/settings.service.js'
 import { scoreAttempt, type ScoreResult } from './scoring.js'
 import { newSeed } from './selection.service.js'
@@ -31,7 +32,11 @@ export async function startAttempt(userId: Oid, mockTestId: Oid) {
     await finalizeAttempt(running._id, 'timeout')
   }
 
-  const docs = await Question.find({ userId, _id: { $in: test.questionIds } }).lean()
+  // Only questions that are still ready (not reported/retired since the test was built) are used.
+  const docs = await Question.find({ _id: { $in: test.questionIds }, status: 'ready' }).lean()
+  const cur = await loadCurriculum(userId).catch(() => null)
+  const subjectIdFor = (name: string | null | undefined) => cur?.subjects.find((s) => taxonomyKey(s.name) === taxonomyKey(name))?.id ?? taxonomyKey(name)
+  const chapterIdFor = (name: string | null | undefined) => cur?.chapters.find((c) => taxonomyKey(c.name) === taxonomyKey(name))?.id ?? taxonomyKey(name)
   const byId = new Map(docs.map((d) => [String(d._id), d]))
   const ordered = test.questionIds.map((id) => byId.get(String(id))).filter((q): q is NonNullable<typeof q> => Boolean(q))
   if (!ordered.length) throw unprocessable('None of this test’s questions exist any more.', 'TEST_EMPTY')
@@ -61,13 +66,17 @@ export async function startAttempt(userId: Oid, mockTestId: Oid) {
         // Options keep their original labels as identity; only display order may be shuffled.
         options: test.config?.shuffleOptions && q.questionType !== 'true_false' ? shuffle(q.options, random) : q.options,
         correctAnswer: q.correctAnswer ?? null,
-        answerVerified: q.status === 'verified' && Array.isArray(q.correctAnswer) && q.correctAnswer.length > 0,
+        answerVerified: Array.isArray(q.correctAnswer) && q.correctAnswer.length > 0,
+        answerSource: q.answerSource ?? null,
+        answerConfidence: q.answerConfidence ?? null,
+        answerExplanation: q.answerExplanation ?? null,
         explanation: q.explanation ?? null,
-        subjectId: q.subjectId,
+        // Ids from the student's own curriculum so per-subject analytics line up with their subjects.
+        subjectId: subjectIdFor(q.subjectName),
         subjectName: q.subjectName,
-        chapterId: q.chapterId,
+        chapterId: q.chapterName ? chapterIdFor(q.chapterName) : null,
         chapterName: q.chapterName,
-        topicId: q.topicId,
+        topicId: q.topicKey,
         topicName: q.topicName,
         difficulty: q.difficulty,
         source: q.source
@@ -219,7 +228,17 @@ export async function getAttempt(userId: Oid, id: Oid) {
       chapterName: q.chapterName,
       ...(running
         ? {}
-        : { correctAnswer: q.correctAnswer, answerVerified: q.answerVerified, explanation: q.explanation, topicName: q.topicName, difficulty: q.difficulty, source: q.source })
+        : {
+            correctAnswer: q.correctAnswer,
+            answerVerified: q.answerVerified,
+            answerSource: q.answerSource ?? null,
+            answerConfidence: q.answerConfidence ?? null,
+            answerExplanation: q.answerExplanation ?? null,
+            explanation: q.explanation,
+            topicName: q.topicName,
+            difficulty: q.difficulty,
+            source: q.source
+          })
     })),
     answers: answers.map((a) => ({ questionId: a.questionId, selected: a.selected, markedForReview: a.markedForReview, visited: a.visited })),
     result: running ? null : attempt.result

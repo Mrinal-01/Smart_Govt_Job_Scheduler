@@ -2,6 +2,7 @@ import type { Types } from 'mongoose'
 import { logger } from '../lib/logger.js'
 import { ProcessingJob, UploadedDocument } from '../models/index.js'
 import { processDocument } from '../modules/documents/pipeline.js'
+import { parkFailedQuestions, runAnswerJob, startAnswerSweeper, stopAnswerSweeper } from '../modules/questions/answer.service.js'
 
 /*
  * Durable job queue backed by MongoDB (no Redis required for local/dev).
@@ -28,8 +29,14 @@ async function claimNext() {
 }
 
 async function runJob(job: NonNullable<Awaited<ReturnType<typeof claimNext>>>) {
+  if (job.type === 'answer_questions') return runAnswer(job)
+  if (!job.documentId) {
+    await ProcessingJob.updateOne({ _id: job._id }, { $set: { status: 'failed', lastError: 'Missing document', finishedAt: new Date() } })
+    return
+  }
+  const documentId = job.documentId
   try {
-    await processDocument(job.documentId)
+    await processDocument(documentId)
     await ProcessingJob.updateOne({ _id: job._id }, { $set: { status: 'completed', finishedAt: new Date(), lastError: null } })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -47,11 +54,28 @@ async function runJob(job: NonNullable<Awaited<ReturnType<typeof claimNext>>>) {
       }
     )
     await UploadedDocument.updateOne(
-      { _id: job.documentId },
+      { _id: documentId },
       final
         ? { $set: { status: 'failed', stage: 'failed', error: 'Processing failed. You can try “Reprocess”.' } }
         : { $set: { status: 'queued', stage: `retrying (attempt ${job.attempts + 1})` } }
     )
+  }
+}
+
+/** AI answering of hub questions. Errors retry with backoff; the questions are never marked ready on failure. */
+async function runAnswer(job: NonNullable<Awaited<ReturnType<typeof claimNext>>>) {
+  try {
+    const outcome = await runAnswerJob({ questionIds: job.questionIds, recheck: job.recheck })
+    await ProcessingJob.updateOne({ _id: job._id }, { $set: { status: 'completed', finishedAt: new Date(), lastError: null, note: outcome } })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    const final = job.attempts >= job.maxAttempts
+    logger.warn({ jobId: String(job._id), attempt: job.attempts, message }, 'Answer job failed')
+    await ProcessingJob.updateOne(
+      { _id: job._id },
+      { $set: { status: final ? 'failed' : 'queued', lastError: message.slice(0, 500), runAfter: new Date(Date.now() + 15_000 * 2 ** job.attempts), finishedAt: final ? new Date() : null } }
+    )
+    if (final) await parkFailedQuestions(job.questionIds, `AI answering failed: ${message}`)
   }
 }
 
@@ -83,9 +107,11 @@ export function startJobWorker() {
       busy = false
     }
   }, POLL_MS)
+  startAnswerSweeper()
 }
 
 export function stopJobWorker() {
   if (timer) clearInterval(timer)
   timer = null
+  stopAnswerSweeper()
 }

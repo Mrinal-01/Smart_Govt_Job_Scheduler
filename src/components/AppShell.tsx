@@ -21,6 +21,7 @@ import {
   Plus,
   RotateCcw,
   Settings as SettingsIcon,
+  Sparkles,
   Sun,
   X
 } from 'lucide-react'
@@ -60,6 +61,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     { to: '/subjects', label: 'Subjects & Chapters', icon: <GraduationCap size={16} />, group: 'study' },
     { to: '/tests', label: 'Tests', icon: <ClipboardList size={16} />, group: 'study' },
     { to: '/mistakes', label: 'Mistake Bank', icon: <CircleHelp size={16} />, badge: state.mistakes.filter((m) => m.status === 'unresolved').length, group: 'study' },
+    { to: '/ai', label: 'AI Help', icon: <Sparkles size={16} />, group: 'study' },
     { to: '/analytics', label: 'Analytics', icon: <BarChart3 size={16} />, group: 'study' },
     { to: '/settings', label: 'Settings', icon: <SettingsIcon size={16} />, group: 'study' }
   ]

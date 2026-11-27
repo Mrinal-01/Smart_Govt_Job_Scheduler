@@ -11,7 +11,7 @@ import mongoose, { Schema } from 'mongoose'
  *   RevisionAttempt     the immutable completion record of one obligation.
  *   GateOverride        an audited emergency bypass of a revision/prerequisite gate.
  *
- * See docs/STUDY_CYCLE_AND_REVISION_API.md for the state machine and consistency strategy.
+ * See docs/API_DOCUMENTATION.md (Schedule & study plan) for the state machine and consistency strategy.
  */
 
 export const SESSION_TYPES = ['learning', 'revision', 'practice', 'mock_test'] as const

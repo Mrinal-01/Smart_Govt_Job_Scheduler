@@ -33,11 +33,7 @@ const schema = z.object({
   REFRESH_TOKEN_TTL_DAYS: int(30, 1, 180),
   COOKIE_SECURE: z.string().optional(),
   COOKIE_SAMESITE: z.enum(['strict', 'lax', 'none']).default('strict'),
-  REQUIRE_EMAIL_VERIFICATION: bool(true),
 
-  MAIL_DRIVER: z.enum(['console', 'resend', 'disabled']).default('console'),
-  MAIL_FROM: z.string().default('StudyOS <no-reply@studyos.local>'),
-  RESEND_API_KEY: z.string().optional(),
 
   STORAGE_DIR: z.string().default('./storage/private'),
   MAX_UPLOAD_MB: int(20, 1, 200),
@@ -45,15 +41,23 @@ const schema = z.object({
   OCR_PROVIDER: z.enum(['auto', 'tesseract', 'none']).default('auto'),
   OCR_LANG: z.string().default('eng'),
 
-  AI_PROVIDER: z.enum(['none', 'anthropic']).default('none'),
+  /* AI (OpenAI Responses API). Leave AI_PROVIDER=none until you have a key. */
+  AI_PROVIDER: z.enum(['none', 'openai']).default('none'),
+  OPENAI_API_KEY: z.string().optional(),
   AI_API_KEY: z.string().optional(),
-  ANTHROPIC_API_KEY: z.string().optional(),
+  /** Model for the study assistant and explanations. */
   AI_MODEL: z.string().optional(),
+  /** Model that works out answers for uploaded questions without an answer key. */
+  AI_ANSWER_MODEL: z.string().optional(),
   AI_BASE_URL: z.string().optional(),
   AI_TIMEOUT_MS: int(120000, 1000, 600000),
+  /** Per-student requests per day (assistant, explanations). */
   AI_DAILY_REQUEST_LIMIT: int(40, 0, 100000),
-  AI_MAX_OUTPUT_TOKENS: int(8000, 256, 16000),
-  AI_EFFORT: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('medium'),
+  /** Server-wide background calls per day (answering uploaded questions). */
+  AI_BACKGROUND_DAILY_LIMIT: int(2000, 0, 1000000),
+  AI_MAX_OUTPUT_TOKENS: int(8000, 256, 32000),
+  AI_EFFORT: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).default('medium'),
+  AI_ANSWER_EFFORT: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).default('high'),
 
   /* Phone + OTP authentication */
   PHONE_ALLOWED_COUNTRY_CODES: z.string().default('91'),
@@ -88,7 +92,7 @@ function secret(name: string, value: string | undefined): string {
   return crypto.randomBytes(48).toString('hex')
 }
 
-const aiKey = raw.AI_API_KEY || raw.ANTHROPIC_API_KEY
+const aiKey = raw.OPENAI_API_KEY || raw.AI_API_KEY
 
 export const env = {
   ...raw,
@@ -104,8 +108,11 @@ export const env = {
   storageDir: path.resolve(raw.STORAGE_DIR),
   maxUploadBytes: raw.MAX_UPLOAD_MB * 1024 * 1024,
   aiApiKey: aiKey,
-  aiModel: raw.AI_MODEL || 'claude-opus-5-5',
-  aiEnabled: raw.AI_PROVIDER === 'anthropic' && Boolean(aiKey)
+  // Defaults follow OpenAI's model-selection guide: GPT-6.2 Sol for most workflows.
+  aiModel: raw.AI_MODEL || 'gpt-6.2-sol',
+  aiAnswerModel: raw.AI_ANSWER_MODEL || raw.AI_MODEL || 'gpt-6.2-sol',
+  aiBaseUrl: (raw.AI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, ''),
+  aiEnabled: raw.AI_PROVIDER === 'openai' && Boolean(aiKey)
 }
 
 export type Env = typeof env

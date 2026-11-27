@@ -13,7 +13,7 @@ import * as svc from './plan.service.js'
 /*
  * /api/plan — scheduled sessions, revision gates, revision obligations, weekly review,
  * analytics. Every route requires authentication and is scoped to the caller's own data;
- * another user's id answers 404. See docs/STUDY_CYCLE_AND_REVISION_API.md.
+ * another user's id answers 404. See docs/API_DOCUMENTATION.md (Schedule & study plan).
  */
 export const planRouter = Router()
 planRouter.use(requireAuth)

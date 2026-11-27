@@ -2,7 +2,8 @@
  * Migration: import a StudyOS browser backup (Settings → Data & backup → Export JSON,
  * i.e. the old localStorage `studyos.state.v3` document) into a user's server workspace.
  *
- *   npm run migrate:import-local -- --email student@example.com --file ./studyos-backup.json [--replace]
+ *   npm run migrate:import-local -- --phone 9876543210 --file ./studyos-backup.json [--replace]
+ *   (--email student@example.com instead of --phone for old email accounts)
  *
  * Never deletes anything unless --replace is given; with --replace the previous
  * workspace is first written to ./storage/backups/<userId>-<timestamp>.json.
@@ -13,6 +14,7 @@ import { env } from '../config/env.js'
 import { connectDb, disconnectDb } from '../db.js'
 import { StudyWorkspace, User } from '../models/index.js'
 import { workspaceDataSchema } from '../modules/workspace/workspace.service.js'
+import { userFilterFromArgs } from './findUser.js'
 
 function arg(name: string) {
   const i = process.argv.indexOf(`--${name}`)
@@ -20,13 +22,13 @@ function arg(name: string) {
 }
 
 async function main() {
-  const email = arg('email')?.toLowerCase()
+  const { filter, label } = userFilterFromArgs()
   const file = arg('file')
   const replace = process.argv.includes('--replace')
-  if (!email || !file) throw new Error('Usage: --email <email> --file <backup.json> [--replace]')
+  if (!file) throw new Error('Usage: --phone <number> --file <backup.json> [--replace]')
   await connectDb(env.MONGODB_URI)
-  const user = await User.findOne({ email })
-  if (!user) throw new Error(`No user with email ${email}`)
+  const user = await User.findOne(filter)
+  if (!user) throw new Error(`No user ${label}`)
   const parsed = workspaceDataSchema.safeParse(JSON.parse(await fs.readFile(file, 'utf8')))
   if (!parsed.success) throw new Error(`Not a valid StudyOS backup: ${parsed.error.issues[0]?.message}`)
   const existing = await StudyWorkspace.findOne({ userId: user._id }).lean()
@@ -41,7 +43,7 @@ async function main() {
   } else {
     await StudyWorkspace.create({ userId: user._id, origin: 'import', schemaVersion: parsed.data.version, data: parsed.data })
   }
-  console.log(`Imported workspace for ${email}`)
+  console.log(`Imported workspace for ${label}`)
   await disconnectDb()
 }
 

@@ -6,33 +6,56 @@ import { chaptersOf } from '../../store/selectors'
 import { api, errorMessage } from '../../lib/http'
 import { cx } from '../../lib/utils'
 
-export type QuestionStatus = 'extracted' | 'needs_review' | 'verified' | 'rejected'
+export type QuestionStatus = 'pending_answer' | 'ready' | 'needs_review' | 'rejected'
 export type QuestionType = 'single_correct' | 'multiple_correct' | 'numeric' | 'true_false' | 'unknown'
 export type MockType = 'full_mixed' | 'sectional' | 'subject_full' | 'chapter' | 'topic' | 'practice'
+export type AnswerSource = 'document_key' | 'student' | 'ai'
 
+/** A question in the shared hub, as the server shows it to the current student. */
 export interface BankQuestion {
   _id: string
   origin: 'pdf' | 'manual' | 'ai_generated'
   documentId: string | null
   source: { documentId: string | null; pageNumber: number | null; questionNumber: string | null }
-  rawText: string
+  rawText?: string
   questionText: string
   questionType: QuestionType
   options: Array<{ label: string; text: string }>
-  correctAnswer: string[] | null
-  answerSource: 'document_key' | 'student' | 'ai_generated' | null
-  explanation: string | null
-  subjectId: string | null
+  /** Only sent for your own questions (and in finished test results). */
+  correctAnswer?: string[] | null
+  hasAnswer: boolean
+  answerSource: AnswerSource | null
+  answerConfidence: number | null
+  answerExplanation?: string | null
+  explanation?: string | null
   subjectName: string | null
-  chapterId: string | null
   chapterName: string | null
-  topicId: string | null
   topicName: string | null
   difficulty: 'easy' | 'medium' | 'hard' | 'unknown'
   status: QuestionStatus
   extractionConfidence: number
   flags: string[]
+  aiCheck: { state: 'queued' | 'done' | 'failed' | null; note: string | null }
+  reportCount: number
+  /** You uploaded it — only you can edit, confirm, reject or delete it. */
+  mine: boolean
   createdAt: string
+}
+
+/** Mirrors the server's subject matching ("Maths" and "Mathematics" are the same hub subject). */
+const KEY_ALIASES: Record<string, string> = { maths: 'mathematics', math: 'mathematics', 'general science': 'science', gk: 'general knowledge', ga: 'general awareness', 'current affair': 'current affairs' }
+export const hubKey = (name: string | null | undefined) => {
+  if (!name) return null
+  const k = name.trim().toLowerCase().replace(/&/g, 'and').replace(/\s+/g, ' ')
+  return k ? (KEY_ALIASES[k] ?? k) : null
+}
+
+/** "Answer key" · "Solved by AI · 92% confident" · "Set by uploader" */
+export function answerSourceLabel(source: AnswerSource | null | undefined, confidence?: number | null) {
+  if (source === 'document_key') return 'Answer key in the paper'
+  if (source === 'ai') return `Solved by AI${typeof confidence === 'number' ? ` · ${Math.round(confidence * 100)}% confident` : ''}`
+  if (source === 'student') return 'Set by the uploader'
+  return 'No answer yet'
 }
 
 export interface UploadedDoc {
@@ -44,9 +67,20 @@ export interface UploadedDoc {
   stage: string
   progress: number
   error: string | null
-  intent: { mockType: string | null; subjectIds: string[] }
+  intent: { mockType: string | null; subjectIds: string[]; subjectNames?: string[] }
   pages: Array<{ pageNumber: number; method: 'text' | 'ocr' | 'ocr_unavailable' | 'empty'; chars: number }>
-  stats: { questionsFound: number; inserted: number; duplicates: number; needsReview: number; textPages: number; ocrPages: number; ocrUnavailablePages: number; answerKeyFound: boolean }
+  stats: {
+    questionsFound: number
+    inserted: number
+    duplicates: number
+    needsReview: number
+    pendingAnswer?: number
+    answersFilled?: number
+    textPages: number
+    ocrPages: number
+    ocrUnavailablePages: number
+    answerKeyFound: boolean
+  }
   aiUsed: boolean
   aiNote: string | null
   createdAt: string
@@ -61,13 +95,14 @@ export const MOCK_TYPE_META: Record<MockType, { label: string; short: string; de
   practice: { label: 'Practice set', short: 'Practice', description: 'Re-attempt from a previous result.' }
 }
 
-export const STATUS_META: Record<QuestionStatus, { label: string; tone: 'neutral' | 'warning' | 'success' | 'danger' | 'info' }> = {
-  extracted: { label: 'Extracted', tone: 'info' },
-  needs_review: { label: 'Needs review', tone: 'warning' },
-  verified: { label: 'Verified', tone: 'success' },
-  rejected: { label: 'Rejected', tone: 'neutral' }
+export const STATUS_META: Record<QuestionStatus, { label: string; tone: 'neutral' | 'warning' | 'success' | 'danger' | 'info'; hint: string }> = {
+  pending_answer: { label: 'Waiting for AI answer', tone: 'info', hint: 'No answer key — AI works out the answer in the background.' },
+  ready: { label: 'Ready', tone: 'success', hint: 'Has a trusted answer and is used in mock tests.' },
+  needs_review: { label: 'Needs review', tone: 'warning', hint: 'Not used in tests until fixed by its uploader or confirmed by an AI re-check.' },
+  rejected: { label: 'Rejected', tone: 'neutral', hint: 'Excluded by its uploader.' }
 }
 
+const GOOD_FLAGS = ['answer_from_document_key', 'answer_from_document_inline', 'recheck_confirmed']
 const FLAG_TEXT: Record<string, string> = {
   no_options_detected: 'No options detected',
   fewer_than_4_options: 'Fewer than 4 options',
@@ -82,7 +117,16 @@ const FLAG_TEXT: Record<string, string> = {
   subject_suggested_by_ai: 'Subject suggested by AI',
   needs_subject: 'Subject not assigned',
   ai_generated: 'AI-generated question',
-  not_official_pyq: 'Not an official previous-year question'
+  not_official_pyq: 'Not an official previous-year question',
+  low_confidence: 'Text was hard to read — check it',
+  ai_unanswerable: 'AI: cannot be answered as written (missing figure/options?)',
+  ai_low_confidence: 'AI was not confident enough',
+  ai_answer_invalid: 'AI answer did not match the options',
+  generator_disagrees: 'Independent AI solve disagreed with the generated answer',
+  reported: 'Reported as wrong by a student',
+  recheck_confirmed: 'AI re-check confirmed the answer',
+  recheck_disagrees: 'AI re-check disagreed with the stored answer',
+  incomplete: 'Incomplete — add options/type/subject'
 }
 
 export const flagLabel = (f: string) => FLAG_TEXT[f] ?? f.replace(/_/g, ' ')
@@ -190,7 +234,8 @@ export function QuestionEditor({
   onDeleted,
   selectable,
   selected,
-  onSelect
+  onSelect,
+  aiConfigured
 }: {
   question: BankQuestion
   onSaved: (q: BankQuestion) => void
@@ -198,18 +243,32 @@ export function QuestionEditor({
   selectable?: boolean
   selected?: boolean
   onSelect?: (v: boolean) => void
+  /** When false, pending questions explain that AI answering waits for an API key. */
+  aiConfigured?: boolean
 }) {
-  const [editing, setEditing] = useState(question.status === 'needs_review' || question.status === 'extracted')
-  const [draft, setDraft] = useState(question)
+  const { state } = useStudy()
+  const editable = question.mine
+  // The hub stores names; map them back to this student's own curriculum ids for the pickers.
+  const taxonomyOf = (q: BankQuestion) => {
+    const subject = state.subjects.find((x) => hubKey(x.name) === hubKey(q.subjectName))
+    const chapter = subject ? chaptersOf(state, subject.id).find((c) => hubKey(c.name) === hubKey(q.chapterName)) : undefined
+    const topic = chapter?.topics.find((t) => hubKey(t.name) === hubKey(q.topicName))
+    return { subjectId: subject?.id ?? null, chapterId: chapter?.id ?? null, topicId: topic?.id ?? null }
+  }
+  const draftOf = (q: BankQuestion) => ({ ...q, ...taxonomyOf(q), correctAnswer: q.correctAnswer ?? null, explanation: q.explanation ?? null })
+  const [editing, setEditing] = useState(editable && question.status === 'needs_review')
+  const [draft, setDraft] = useState(() => draftOf(question))
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string[]>([])
-  useEffect(() => setDraft(question), [question])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => setDraft(draftOf(question)), [question])
 
+  const original = useMemo(() => draftOf(question), [question]) // eslint-disable-line react-hooks/exhaustive-deps
   const dirty = useMemo(
     () =>
       JSON.stringify([draft.questionText, draft.questionType, draft.options, draft.correctAnswer, draft.explanation, draft.subjectId, draft.chapterId, draft.topicId, draft.difficulty]) !==
-      JSON.stringify([question.questionText, question.questionType, question.options, question.correctAnswer, question.explanation, question.subjectId, question.chapterId, question.topicId, question.difficulty]),
-    [draft, question]
+      JSON.stringify([original.questionText, original.questionType, original.options, original.correctAnswer, original.explanation, original.subjectId, original.chapterId, original.topicId, original.difficulty]),
+    [draft, original]
   )
 
   const call = async (label: string, fn: () => Promise<{ question: BankQuestion } | void>) => {
@@ -239,11 +298,10 @@ export function QuestionEditor({
   })
 
   const save = () => call('save', () => api<{ question: BankQuestion }>(`/api/questions/${question._id}`, { method: 'PATCH', body: patchBody() }))
-
-  const verify = () =>
-    call('verify', async () => {
+  const confirm = () =>
+    call('confirm', async () => {
       if (dirty) await api(`/api/questions/${question._id}`, { method: 'PATCH', body: patchBody() })
-      return api<{ question: BankQuestion }>(`/api/questions/${question._id}/verify`, { method: 'POST' })
+      return api<{ question: BankQuestion }>(`/api/questions/${question._id}/confirm`, { method: 'POST' })
     })
 
   const toggleAnswer = (label: string) => {
@@ -256,7 +314,7 @@ export function QuestionEditor({
   return (
     <article className={cx('q-card', `is-${question.status}`)}>
       <header className="q-card__head">
-        {selectable ? <input type="checkbox" className="checkbox" checked={Boolean(selected)} onChange={(e) => onSelect?.(e.target.checked)} aria-label="Select question" /> : null}
+        {selectable && editable ? <input type="checkbox" className="checkbox" checked={Boolean(selected)} onChange={(e) => onSelect?.(e.target.checked)} aria-label="Select question" /> : null}
         <span className="q-card__num">{question.source.questionNumber ? `Q${question.source.questionNumber}` : 'Q'}</span>
         <Badge tone={status.tone} size="sm" dot>
           {status.label}
@@ -264,17 +322,20 @@ export function QuestionEditor({
         <OriginBadge q={question} />
         {question.subjectName ? <Badge size="sm" tone="accent">{question.subjectName}</Badge> : null}
         {question.chapterName ? <span className="text-tertiary" style={{ fontSize: 12 }}>{question.chapterName}</span> : null}
+        {question.mine ? <Badge size="sm">Your upload</Badge> : null}
         <span className="spacer" />
-        <SourcePageButton documentId={question.source.documentId} page={question.source.pageNumber} />
-        <Button size="sm" variant="ghost" onClick={() => setEditing((e) => !e)}>
-          {editing ? 'Collapse' : 'Edit'}
-        </Button>
+        {question.mine ? <SourcePageButton documentId={question.source.documentId} page={question.source.pageNumber} /> : null}
+        {editable ? (
+          <Button size="sm" variant="ghost" onClick={() => setEditing((e) => !e)}>
+            {editing ? 'Collapse' : 'Edit'}
+          </Button>
+        ) : null}
       </header>
 
       {question.flags.length ? (
         <div className="pill-row" style={{ marginBottom: 8 }}>
           {question.flags.map((f) => (
-            <span key={f} className={cx('flag-chip', f.startsWith('answer_from') && 'is-good')}>
+            <span key={f} className={cx('flag-chip', GOOD_FLAGS.includes(f) && 'is-good')}>
               {flagLabel(f)}
             </span>
           ))}
@@ -291,7 +352,20 @@ export function QuestionEditor({
               </li>
             ))}
           </ol>
-          {!question.correctAnswer ? <p className="text-tertiary" style={{ fontSize: 12 }}>No verified answer — this question will be unscored in tests.</p> : null}
+          <p className="q-answer-status">
+            {question.status === 'pending_answer'
+              ? aiConfigured === false
+                ? 'Waiting for AI to work out the answer — AI is not switched on yet on this server (add OPENAI_API_KEY). It will be answered automatically once it is.'
+                : question.aiCheck.state === 'failed'
+                  ? 'AI could not answer it yet — it will retry automatically.'
+                  : 'AI is working out the answer in the background.'
+              : question.hasAnswer
+                ? `${answerSourceLabel(question.answerSource, question.answerConfidence)}${question.correctAnswer ? ` — ${question.correctAnswer.join(', ')}` : ''}`
+                : 'No answer — not used in tests.'}
+          </p>
+          {question.answerExplanation ? <p className="text-secondary" style={{ fontSize: 12 }}>Why: {question.answerExplanation}</p> : null}
+          {question.mine && question.aiCheck.note && question.status === 'needs_review' ? <p className="text-tertiary" style={{ fontSize: 12 }}>AI note: {question.aiCheck.note}</p> : null}
+          {question.reportCount ? <p className="text-warning" style={{ fontSize: 12 }}>Reported as wrong by {question.reportCount} student(s).</p> : null}
         </div>
       ) : (
         <div className="stack">
@@ -318,12 +392,12 @@ export function QuestionEditor({
             </Field>
           </div>
           {draft.questionType === 'numeric' ? (
-            <Field label="Correct numeric answer" hint="Leave empty if the PDF has no answer key">
+            <Field label="Correct numeric answer" hint="Leave empty to let AI work it out">
               <Input value={draft.correctAnswer?.[0] ?? ''} onChange={(e) => setDraft({ ...draft, correctAnswer: e.target.value ? [e.target.value] : [] })} />
             </Field>
           ) : (
             <div className="stack stack--sm">
-              <span className="field__label">Options — tick the correct answer only if you are sure</span>
+              <span className="field__label">Options — tick the correct answer only if you are sure (leave it empty to let AI solve it)</span>
               {draft.options.map((o, i) => (
                 <div key={i} className="option-edit">
                   <button
@@ -359,11 +433,7 @@ export function QuestionEditor({
                   </Button>
                 </div>
               ) : null}
-              {question.answerSource ? (
-                <p className="text-tertiary" style={{ fontSize: 12 }}>
-                  Current answer source: {question.answerSource === 'document_key' ? 'PDF answer key' : question.answerSource === 'ai_generated' ? 'AI (unverified until you verify)' : 'you'}
-                </p>
-              ) : null}
+              {question.answerSource ? <p className="text-tertiary" style={{ fontSize: 12 }}>Current answer: {answerSourceLabel(question.answerSource, question.answerConfidence)}</p> : null}
             </div>
           )}
           <TaxonomyFields value={{ subjectId: draft.subjectId, chapterId: draft.chapterId, topicId: draft.topicId }} onChange={(v) => setDraft({ ...draft, ...v })} compact />
@@ -386,40 +456,42 @@ export function QuestionEditor({
         </div>
       ) : null}
 
-      <footer className="q-card__foot">
-        {editing ? (
-          <Button size="sm" icon={<Save size={13} />} disabled={!dirty} loading={busy === 'save'} onClick={save}>
-            Save
-          </Button>
-        ) : null}
-        {question.status !== 'verified' ? (
-          <Button size="sm" variant="success" icon={<ShieldCheck size={13} />} loading={busy === 'verify'} onClick={verify}>
-            {dirty ? 'Save & verify' : 'Verify'}
-          </Button>
-        ) : null}
-        {question.status !== 'rejected' ? (
-          <Button size="sm" variant="ghost" loading={busy === 'reject'} onClick={() => call('reject', () => api<{ question: BankQuestion }>(`/api/questions/${question._id}/reject`, { method: 'POST' }))}>
-            Reject
-          </Button>
-        ) : null}
-        {onDeleted ? (
-          <Button
-            size="sm"
-            variant="ghost"
-            icon={<Trash2 size={13} />}
-            loading={busy === 'delete'}
-            onClick={() =>
-              window.confirm('Delete this question from your bank? Finished test results keep their copy.') &&
-              call('delete', async () => {
-                await api(`/api/questions/${question._id}`, { method: 'DELETE' })
-                onDeleted(question._id)
-              })
-            }
-          >
-            Delete
-          </Button>
-        ) : null}
-      </footer>
+      {editable ? (
+        <footer className="q-card__foot">
+          {editing ? (
+            <Button size="sm" icon={<Save size={13} />} disabled={!dirty} loading={busy === 'save'} onClick={save}>
+              Save
+            </Button>
+          ) : null}
+          {question.status === 'needs_review' ? (
+            <Button size="sm" variant="success" icon={<ShieldCheck size={13} />} loading={busy === 'confirm'} onClick={confirm} title="Use this question in tests (or send it to AI when it has no answer)">
+              {dirty ? 'Save & confirm' : 'Confirm'}
+            </Button>
+          ) : null}
+          {question.status !== 'rejected' ? (
+            <Button size="sm" variant="ghost" loading={busy === 'reject'} onClick={() => call('reject', () => api<{ question: BankQuestion }>(`/api/questions/${question._id}/reject`, { method: 'POST' }))}>
+              Reject
+            </Button>
+          ) : null}
+          {onDeleted ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<Trash2 size={13} />}
+              loading={busy === 'delete'}
+              onClick={() =>
+                window.confirm('Delete this question from the hub? If other students already use it in their tests it is retired instead. Finished test results keep their copy.') &&
+                call('delete', async () => {
+                  await api(`/api/questions/${question._id}`, { method: 'DELETE' })
+                  onDeleted(question._id)
+                })
+              }
+            >
+              Delete
+            </Button>
+          ) : null}
+        </footer>
+      ) : null}
     </article>
   )
 }

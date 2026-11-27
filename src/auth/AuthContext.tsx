@@ -27,7 +27,6 @@ export interface OtpRequestResult {
 export interface PublicConfig {
   ai: { configured: boolean; provider: string | null; model: string | null }
   ocr: { provider: string; available: boolean }
-  mail: { driver: string; delivers: boolean }
   sms: { driver: string; delivers: boolean }
   phoneCountryCodes: string[]
   maxUploadMb: number
@@ -35,7 +34,6 @@ export interface PublicConfig {
   schedulePolicy: { maxChanges: number; windowDays: number }
   timezone: string
   environment: string
-  devMailbox: boolean
   devSms: boolean
 }
 

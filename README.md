@@ -10,19 +10,23 @@ server-authoritative exam engine and a Mistake Bank.
 ```bash
 npm run setup
 npm run dev          # web http://localhost:3000 · API http://localhost:4000
-npm run seed:master  # master login: phone +91 90000 00001 + one-time code (shown on screen in dev)
+npm run seed:master  # demo student: phone 9000000001 + one-time code (shown on screen in dev); add `--prefix server ... -- --reset-all` to wipe everything first (docs/SETUP.md)
 npm run check        # typecheck + production build
 ```
 
-Documentation: [Setup](docs/SETUP.md) · [Architecture](docs/ARCHITECTURE.md) ·
-[Database](docs/DATABASE_SCHEMA.md) · [API](docs/API_DOCUMENTATION.md) ·
-[Study cycles & revision API](docs/STUDY_CYCLE_AND_REVISION_API.md) ·
-[Security](docs/SECURITY.md)
+## Documentation
+
+| Doc | Read it for |
+|---|---|
+| [docs/SETUP.md](docs/SETUP.md) | install, run, **every key/credential and where to put it** (database, secrets, SMS, AI, OCR), production, maintenance commands |
+| [docs/FEATURE_GUIDE.md](docs/FEATURE_GUIDE.md) | click-by-click test walkthrough with the demo data + the rules of each feature |
+| [docs/API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md) | every API endpoint (incl. the study-plan / revision-gate contract) |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | how it is built, database collections, security |
 
 ## Stack
 
 **Web:** React 18 · TypeScript · Vite 5 · React Router 6 · Lucide React · Recharts · plain CSS with design tokens.
-**API:** Node · Express · TypeScript · MongoDB (Mongoose) · Zod · pino · Argon2id · optional Anthropic SDK.
+**API:** Node · Express · TypeScript · MongoDB (Mongoose) · Zod · pino · Argon2id · optional OpenAI (Responses API over HTTPS, no SDK).
 
 ```
 src/                         # React app
@@ -33,10 +37,10 @@ src/                         # React app
 ├─ pages/                    # dashboard, schedule, cycles, tests, analytics, settings, auth…
 └─ styles/                   # tokens, base, components, pages
 server/src/                  # API
-├─ modules/                  # auth, workspace, settings, schedule, cycles, documents,
+├─ modules/                  # auth, workspace, settings, schedule, plan, sounds, documents,
 │                            # questions, exams, ai, notifications, system
 ├─ models/                   # Mongoose schemas
-├─ integrations/             # mail, private file storage, AI provider
+├─ integrations/             # SMS, private file storage, AI provider
 └─ jobs/queue.ts             # Mongo-backed background worker (PDF processing)
 ```
 
@@ -51,11 +55,11 @@ server/src/                  # API
 | **Revision gates** | Server-enforced for the published schedule: same-day revision per subject before the next cycle, Daily Carryover Revision before any new learning, separate weekly revision, audited emergency overrides |
 | **Revision** | Same-day / next-day / weekly / monthly tracked separately on 1·3·7·15·30 intervals; first learning never counts as a revision |
 | **Reminders** | `ended → awaiting-completion → overdue` state machine with looping audio alert, snooze and skip |
-| **PDF → question bank** | Upload a paper, text/OCR extraction, question/option/answer-key parsing, review & verify |
-| **Mock tests** | Mixed / subject / sectional / chapter / topic tests from verified questions; server deadline, autosave, resume, auto-submit |
+| **PDF → question hub** | Upload a paper, text/OCR extraction, question/option/answer-key parsing into one hub shared by all students; questions without an answer key are answered by AI in the background |
+| **Mock tests** | Mixed / subject / sectional / chapter / topic tests from ready hub questions; server deadline, autosave, resume, auto-submit |
 | **Results & Mistake Bank** | Breakdowns, answer review, retakes, mistakes captured automatically |
 | **Analytics** | 365-day heatmap, planned vs actual, accuracy trend, mastery radar, weakest topics |
-| **AI help** | Optional: explain a wrong answer / generate practice questions when the operator configures `AI_PROVIDER` |
+| **AI Help** | Study-only tutor (topics, question solving, schedule, revision, exam strategy) plus AI answers for uploaded questions — switched on by adding `OPENAI_API_KEY` |
 
 ## Try the main workflows
 
@@ -64,7 +68,7 @@ server/src/                  # API
 | Authentication | `/register` → name + mobile → code (shown on screen in dev) → signed in; `/login` → mobile → code |
 | Study cycles | `/schedule` → today's Cycle 1 → finish a subject → its Cycle 2 shows the revision block first |
 | Schedule governance | `/schedule` → edit → *Review & publish*; *History* shows versions |
-| PDF to question bank | `/tests/new` → upload `samples/sample-question-paper.pdf` → *Review & verify questions* |
+| PDF to question hub | `/tests/new` → upload `samples/sample-question-paper.pdf` with a subject → review its questions in *Question hub* |
 | Examination | start a test → answer, mark for review, refresh, submit |
 | Reminders | Settings → Reminders & sound → pick a tone or upload your own (max 10) → *Trigger reminder now* |
 
@@ -82,4 +86,4 @@ server/src/                  # API
 npm run build:all
 pm2 start ecosystem.config.cjs      # API + built web app on http://localhost:3000
 ```
-See [docs/SETUP.md](docs/SETUP.md) for required production environment variables.
+See [docs/SETUP.md](docs/SETUP.md) › Configuration for the required production settings.

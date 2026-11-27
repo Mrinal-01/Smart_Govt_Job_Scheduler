@@ -1,14 +1,15 @@
 import { Types } from 'mongoose'
 import { seededRandom, shuffle } from '../../lib/crypto.js'
 import { unprocessable } from '../../lib/errors.js'
-import { MockTestAttempt, Question } from '../../models/index.js'
+import { MockTestAttempt, Question, taxonomyKey } from '../../models/index.js'
 import type { Curriculum } from '../workspace/curriculum.service.js'
 
 /*
- * Deterministic question selection. Works only from the student's actual
- * verified question bank; given the same bank and seed it returns the same
- * test. Never returns a short test — insufficient buckets raise a 422 with
- * per-bucket availability so the UI can explain exactly what is missing.
+ * Deterministic question selection from the shared question hub. Only `ready` questions
+ * (trusted answer) are eligible. The student's curriculum subjects/chapters/topics are
+ * matched to hub questions by normalized name. Given the same hub and seed it returns the
+ * same test. Never returns a short test — insufficient buckets raise a 422 with per-bucket
+ * availability so the UI can explain exactly what is missing.
  */
 
 export type MockType = 'full_mixed' | 'sectional' | 'subject_full' | 'chapter' | 'topic' | 'practice'
@@ -42,7 +43,7 @@ interface Bucket {
 interface Candidate {
   _id: Types.ObjectId
   difficulty: string
-  topicId: string | null
+  topicKey: string | null
 }
 
 export function buildBuckets(type: MockType, cfg: SelectionConfig, cur: Curriculum): Bucket[] {
@@ -57,24 +58,28 @@ export function buildBuckets(type: MockType, cfg: SelectionConfig, cur: Curricul
         if (!cur.subject(d.subjectId)) throw unprocessable('Unknown subject in distribution', 'UNKNOWN_SUBJECT')
         if (ids.has(d.subjectId)) throw unprocessable('A subject appears twice in the distribution.', 'INVALID_CONFIG')
         ids.add(d.subjectId)
-        return { key: d.subjectId, label: subjectName(d.subjectId), filter: { subjectId: d.subjectId }, count: d.count }
+        return { key: d.subjectId, label: subjectName(d.subjectId), filter: { subjectKey: taxonomyKey(subjectName(d.subjectId)) }, count: d.count }
       })
     }
     case 'subject_full': {
       if (cfg.subjectIds.length !== 1 || !cur.subject(cfg.subjectIds[0])) throw unprocessable('Choose exactly one subject.', 'INVALID_CONFIG')
-      return [{ key: cfg.subjectIds[0], label: subjectName(cfg.subjectIds[0]), filter: { subjectId: cfg.subjectIds[0] }, count: cfg.questionCount }]
+      return [{ key: cfg.subjectIds[0], label: subjectName(cfg.subjectIds[0]), filter: { subjectKey: taxonomyKey(subjectName(cfg.subjectIds[0])) }, count: cfg.questionCount }]
     }
     case 'chapter': {
       if (!cfg.chapterIds.length) throw unprocessable('Choose at least one chapter.', 'INVALID_CONFIG')
       for (const id of cfg.chapterIds) if (!cur.chapter(id)) throw unprocessable('Unknown chapter', 'UNKNOWN_CHAPTER')
-      const label = cfg.chapterIds.map((id) => cur.chapter(id)!.name).join(', ')
-      return [{ key: 'chapters', label, filter: { chapterId: { $in: cfg.chapterIds } }, count: cfg.questionCount }]
+      const chapters = cfg.chapterIds.map((id) => cur.chapter(id)!)
+      const label = chapters.map((c) => c.name).join(', ')
+      const filter = { $or: chapters.map((c) => ({ subjectKey: taxonomyKey(subjectName(c.subjectId)), chapterKey: taxonomyKey(c.name) })) }
+      return [{ key: 'chapters', label, filter, count: cfg.questionCount }]
     }
     case 'topic': {
       if (!cfg.topicIds.length) throw unprocessable('Choose at least one topic.', 'INVALID_CONFIG')
       for (const id of cfg.topicIds) if (!cur.topic(id)) throw unprocessable('Unknown topic', 'UNKNOWN_TOPIC')
-      const label = cfg.topicIds.map((id) => cur.topic(id)!.name).join(', ')
-      return [{ key: 'topics', label, filter: { topicId: { $in: cfg.topicIds } }, count: cfg.questionCount }]
+      const topics = cfg.topicIds.map((id) => cur.topic(id)!)
+      const label = topics.map((t) => t.name).join(', ')
+      const filter = { $or: topics.map((t) => ({ subjectKey: taxonomyKey(subjectName(t.subjectId)), topicKey: taxonomyKey(t.name) })) }
+      return [{ key: 'topics', label, filter, count: cfg.questionCount }]
     }
     default:
       throw unprocessable('Unsupported test type for selection', 'INVALID_CONFIG')
@@ -112,7 +117,7 @@ function pickFromBucket(cands: Candidate[], bucket: Bucket, cfg: SelectionConfig
   if (cands.length < bucket.count) return { picked: [], ok: false }
   if (cfg.selectionMethod === 'topic') {
     const groups = new Map<string, Candidate[]>()
-    for (const c of shuffle(cands, random)) groups.set(c.topicId ?? '_untagged', [...(groups.get(c.topicId ?? '_untagged') ?? []), c])
+    for (const c of shuffle(cands, random)) groups.set(c.topicKey ?? '_untagged', [...(groups.get(c.topicKey ?? '_untagged') ?? []), c])
     const queues = shuffle(Array.from(groups.values()), random)
     const picked: Candidate[] = []
     while (picked.length < bucket.count) {
@@ -142,10 +147,10 @@ export async function selectQuestions(userId: Types.ObjectId, type: MockType, cf
   const reports: BucketReport[] = []
   const picked: Types.ObjectId[] = []
   for (const bucket of buckets) {
-    const cands = (await Question.find({ userId, status: 'verified', _id: { $nin: exclude }, ...bucket.filter })
-      .select('_id difficulty topicId')
+    const cands = (await Question.find({ status: 'ready', _id: { $nin: exclude }, ...bucket.filter })
+      .select('_id difficulty topicKey')
       .sort({ _id: 1 })
-      .lean()) as Candidate[]
+      .lean()) as unknown as Candidate[]
     const r = pickFromBucket(cands, bucket, cfg, random)
     reports.push({ key: bucket.key, label: bucket.label, requested: bucket.count, available: cands.length, detail: 'detail' in r ? r.detail : undefined })
     if (r.ok) picked.push(...r.picked.map((c) => c._id))
@@ -156,9 +161,9 @@ export async function selectQuestions(userId: Types.ObjectId, type: MockType, cf
 
 export function insufficientError(reports: BucketReport[], avoidRecentDays: number) {
   const short = reports.filter((r) => r.available < r.requested || r.detail?.some((d) => d.available < d.requested))
-  const lines = short.map((r) => `${r.label}: ${r.available} verified available, ${r.requested} requested`)
+  const lines = short.map((r) => `${r.label}: ${r.available} ready, ${r.requested} requested`)
   return unprocessable(
-    `Not enough verified questions in your bank. ${lines.join('; ')}.${avoidRecentDays ? ' (Recently attempted questions are excluded.)' : ''}`,
+    `Not enough ready questions in the question hub. ${lines.join('; ')}. Upload more question papers for these subjects — questions without an answer key become ready once AI answers them.${avoidRecentDays ? ' (Recently attempted questions are excluded.)' : ''}`,
     'INSUFFICIENT_QUESTIONS',
     { buckets: reports }
   )
